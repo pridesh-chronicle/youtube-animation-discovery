@@ -5,12 +5,14 @@ from api_client import BrightDataClient
 from animation_detector import is_animated
 
 class DiscoveryAgent:
-    def __init__(self):
+    def __init__(self, save_videos=False, save_frames=False):
         self.client = BrightDataClient()
         self.processed_videos = set()  # Global set to track processed videos
         self.animated_videos = []      # Store animated videos found
         self.queue = []               # Queue of videos to process
         self.db_filename = "animated_videos.db"
+        self.save_videos = save_videos
+        self.save_frames = save_frames
         self.setup_database()
         
     def add_to_queue(self, video_ids):
@@ -45,7 +47,7 @@ class DiscoveryAgent:
             self.processed_videos.add(video_id)
             
             # Check if animated
-            if is_animated(video_url):
+            if is_animated(video_url, save_videos=self.save_videos, save_frames=self.save_frames):
                 print(f"✅ Found animated video: {video_data.get('title', 'Unknown')}")
                 self.animated_videos.append(video_data)
                 
@@ -55,6 +57,9 @@ class DiscoveryAgent:
                 
                 # Get recommendations and add to queue
                 recommendations = self.client.get_recommendations(video_data)
+                print(f"🔍 Found {len(recommendations)} recommendations for {video_data.get('title', 'Unknown')}")
+                if recommendations:
+                    print(f"📋 Sample recommendations: {recommendations[:3]}")
                 self.add_to_queue(recommendations)
             else:
                 print(f"❌ Not animated: {video_data.get('title', 'Unknown')}")

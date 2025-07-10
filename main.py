@@ -9,8 +9,12 @@ def main():
         "RtU8nBnpFVE"   # Your example video
     ]
     
+    # Configuration flags for saving videos and frames
+    save_videos = True   # Set to False to disable video saving
+    save_frames = True   # Set to False to disable frame saving
+    
     # Create and run discovery agent
-    agent = DiscoveryAgent()
+    agent = DiscoveryAgent(save_videos=save_videos, save_frames=save_frames)
     
     print("🎬 YouTube Animation Discovery Agent")
     print("=" * 40)

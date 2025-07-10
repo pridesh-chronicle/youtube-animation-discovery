@@ -29,7 +29,20 @@ def get_video_duration(video_path):
     info = json.loads(result.stdout)
     return float(info["format"]["duration"])
 
-def extract_frames(video_path, video_url, base_output_dir="frames", frame_count=10):
+def extract_frames(video_path, video_url, base_output_dir="frames", frame_count=10, save_to_persistent=False):
+    """
+    Extract frames from a video.
+    
+    Args:
+        video_path (str): Path to the video file
+        video_url (str): YouTube video URL 
+        base_output_dir (str): Base directory for frame extraction
+        frame_count (int): Number of frames to extract
+        save_to_persistent (bool): Whether to also save to persistent frames/ folder
+    
+    Returns:
+        list: List of paths to extracted frame files
+    """
     video_id = extract_video_id(video_url)
     output_dir = Path(base_output_dir) / video_id
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -38,6 +51,8 @@ def extract_frames(video_path, video_url, base_output_dir="frames", frame_count=
     interval = duration / frame_count
 
     extracted_frames = []
+    persistent_frames = []
+    
     for i in range(frame_count):
         timestamp = i * interval
         out_file = output_dir / f"frame_{i:03d}.png"
@@ -49,7 +64,21 @@ def extract_frames(video_path, video_url, base_output_dir="frames", frame_count=
             "-q:v", "2",
             str(out_file)
         ]
-        subprocess.run(command, check=True)
+        subprocess.run(command, check=True, capture_output=True)
         extracted_frames.append(out_file)
+        
+        # If save_to_persistent is True, also save to frames/{video_id}/ folder
+        if save_to_persistent:
+            persistent_dir = Path("frames") / video_id
+            persistent_dir.mkdir(parents=True, exist_ok=True)
+            persistent_file = persistent_dir / f"frame_{i:03d}.png"
+            
+            # Copy the frame to persistent location
+            import shutil
+            shutil.copy2(out_file, persistent_file)
+            persistent_frames.append(persistent_file)
+    
+    if save_to_persistent and persistent_frames:
+        print(f"🖼️  Saved {len(persistent_frames)} frames to: frames/{video_id}/")
 
     return extracted_frames
