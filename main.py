@@ -6,7 +6,8 @@ def main():
     # Example seed videos (you can change these)
     seed_videos = [
         "hwiyUuYZLHE",  # Your example video
-        "RtU8nBnpFVE"   # Your example video
+        "RtU8nBnpFVE",  # Your example video
+        "Bl1FOKpFY2Q"   # Your example video
     ]
     
     # Configuration flags for saving videos and frames

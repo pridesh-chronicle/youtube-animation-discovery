@@ -108,23 +108,23 @@ class BrightDataClient:
         
         # Extract from recommended_videos (array of URLs)
         if video_data.get("recommended_videos"):
-            for url in video_data["recommended_videos"]:
-                if "watch?v=" in url:
-                    video_id = url.split("watch?v=")[1].split("&")[0]
+            for video in video_data["recommended_videos"]:
+                if "watch?v=" in video['url']:
+                    video_id = video['url'].split("watch?v=")[1].split("&")[0]
                     recommendations.append(video_id)
         
         # Extract from next_recommended_videos (array of URLs)
         if video_data.get("next_recommended_videos"):
-            for url in video_data["next_recommended_videos"]:
-                if "watch?v=" in url:
-                    video_id = url.split("watch?v=")[1].split("&")[0]
+            for video in video_data["next_recommended_videos"]:
+                if "watch?v=" in video['url']:
+                    video_id = video['url'].split("watch?v=")[1].split("&")[0]
                     recommendations.append(video_id)
         
         # Extract from related_videos (array of URLs)
         if video_data.get("related_videos"):
-            for url in video_data["related_videos"]:
-                if "watch?v=" in url:
-                    video_id = url.split("watch?v=")[1].split("&")[0]
+            for video in video_data["related_videos"]:
+                if "watch?v=" in video['url']:
+                    video_id = video['url'].split("watch?v=")[1].split("&")[0]
                     recommendations.append(video_id)
         
         return list(set(recommendations))  # Remove duplicates 

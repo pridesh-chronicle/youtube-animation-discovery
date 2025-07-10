@@ -1,0 +1,28 @@
+# Ignore environment files
+.env
+
+# Node modules
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# IDEs/editors
+.vscode/
+.idea/
+
+# Python (if relevant)
+__pycache__/
+*.pyc
+
+# Others (customize as needed)
+*.bak
+*.swp
