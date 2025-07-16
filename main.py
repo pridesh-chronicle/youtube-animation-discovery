@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 
+import logging
 from discovery_agent import DiscoveryAgent
+
+# Configure logging for main
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 def main():
     # Example seed videos (you can change these)
@@ -14,24 +22,31 @@ def main():
     save_videos = True   # Set to False to disable video saving
     save_frames = True   # Set to False to disable frame saving
     
-    # Create and run discovery agent
-    agent = DiscoveryAgent(save_videos=save_videos, save_frames=save_frames)
+    logger.info("🎬 YouTube Animation Discovery Agent Starting")
+    logger.info("=" * 50)
     
-    print("🎬 YouTube Animation Discovery Agent")
-    print("=" * 40)
-    
-    # Start discovery process
-    animated_videos = agent.start_discovery(seed_videos, max_iterations=50)
-    
-    # Save results
-    agent.save_results()
-    
-    print(f"\n🎉 Discovery complete!")
-    print(f"Total animated videos found: {len(animated_videos)}")
-    print(f"Total videos processed: {len(agent.processed_videos)}")
-    print(f"📊 Data saved to SQLite database: {agent.db_filename}")
-    print(f"💡 View with: sqlite3 {agent.db_filename}")
-    print(f"💡 Or use DB Browser for SQLite: https://sqlitebrowser.org/")
+    try:
+        # Create and run discovery agent
+        agent = DiscoveryAgent(save_videos=save_videos, save_frames=save_frames)
+        
+        # Start discovery process
+        animated_videos = agent.start_discovery(seed_videos, max_iterations=1000)
+        
+        # Save results
+        agent.save_results()
+        
+        # Final summary
+        logger.info("🎉 Discovery complete!")
+        logger.info(f"📊 Results Summary:")
+        logger.info(f"   • Total animated videos found: {len(animated_videos)}")
+        logger.info(f"   • Total videos processed: {len(agent.processed_videos)}")
+        logger.info(f"   • Videos remaining in queue: {len(agent.queue)}")
+        logger.info(f"   • Database: animated_videos.db")
+        logger.info(f"   • Log file: discovery_agent.log")
+        
+    except Exception as e:
+        logger.error(f"Discovery failed: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     main() 

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?><sqlb_project><db path="animated_videos.db" readonly="0" foreign_keys="1" case_sensitive_like="0" temp_store="0" wal_autocheckpoint="1000" synchronous="2"/><attached/><window><main_tabs open="structure browser pragmas query" current="1"/></window><tab_structure><column_width id="0" width="300"/><column_width id="1" width="0"/><column_width id="2" width="100"/><column_width id="3" width="1940"/><column_width id="4" width="0"/><expanded_item id="0" parent="1"/><expanded_item id="1" parent="1"/><expanded_item id="2" parent="1"/><expanded_item id="3" parent="1"/></tab_structure><tab_browse><table title="videos" custom_title="0" dock_id="4" table="4,6:mainvideos"/><dock_state state="000000ff00000000fd0000000100000002000002b70000021dfc0100000004fb000000160064006f0063006b00420072006f00770073006500310100000000000002b70000000000000000fb000000160064006f0063006b00420072006f00770073006500320100000000000002b70000000000000000fb000000160064006f0063006b00420072006f00770073006500330100000000000003740000000000000000fb000000160064006f0063006b00420072006f00770073006500340100000000000002b70000011400ffffff0000027e0000000000000004000000040000000800000008fc00000000"/><default_encoding codec=""/><browse_table_settings><table schema="main" name="videos" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_" freeze_columns="0"><sort/><column_widths><column index="1" value="92"/><column index="2" value="300"/><column index="3" value="265"/><column index="4" value="68"/><column index="5" value="55"/><column index="6" value="112"/><column index="7" value="85"/><column index="8" value="93"/><column index="9" value="146"/><column index="10" value="300"/><column index="11" value="214"/><column index="12" value="300"/><column index="13" value="300"/><column index="14" value="91"/><column index="15" value="58"/><column index="16" value="161"/><column index="17" value="114"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table></browse_table_settings></tab_browse><tab_sql><sql name="SQL 1*">WITH creator_metrics AS (
+    SELECT 
+        youtuber,
+        handle_name,
+        channel_url,
+        COUNT(*) as video_count,
+        AVG(views) as avg_views,
+        AVG(likes) as avg_likes,
+        MAX(subscribers) as max_subscribers,
+        AVG(CAST(likes AS FLOAT) / NULLIF(views, 0)) as avg_like_ratio,
+        AVG(CAST(num_comments AS FLOAT) / NULLIF(views, 0)) as avg_comment_ratio,
+        AVG(num_recommendations) as avg_recommendations,
+        MAX(discovered_at) as latest_discovery,
+        MIN(discovered_at) as first_discovery,
+        COUNT(CASE WHEN verified = 1 THEN 1 END) as verified_count
+    FROM videos 
+    WHERE youtuber IS NOT NULL 
+        AND views &gt; 0 
+        AND discovered_at &gt;= datetime('now', '-30 days')  -- Focus on recent discoveries
+    GROUP BY youtuber, handle_name, channel_url
+    HAVING COUNT(*) &gt;= 2  -- Must have at least 2 videos discovered
+),
+trending_score AS (
+    SELECT 
+        *,
+        -- Calculate trending score (weighted combination of metrics)
+        (
+            (avg_views / 100000.0) * 0.3 +              -- View count weight
+            (avg_like_ratio * 10000) * 0.2 +           -- Engagement weight  
+            (max_subscribers / 10000.0) * 0.2 +        -- Subscriber weight
+            (avg_comment_ratio * 10000) * 0.1 +        -- Comment engagement
+            (video_count / 10.0) * 0.1 +               -- Content frequency
+            (avg_recommendations / 10.0) * 0.1 +       -- Recommendability
+            (verified_count * 2.0)                      -- Verification bonus
+        ) as trending_score,
+        
+        -- Days since first discovery (newer = more trending)
+        ROUND(julianday('now') - julianday(first_discovery), 1) as days_since_first_discovery,
+        
+        -- Recent activity indicator
+        CASE 
+            WHEN latest_discovery &gt;= datetime('now', '-7 days') THEN 'Very Recent'
+            WHEN latest_discovery &gt;= datetime('now', '-14 days') THEN 'Recent'
+            WHEN latest_discovery &gt;= datetime('now', '-30 days') THEN 'Moderate'
+            ELSE 'Older'
+        END as recency_category
+    FROM creator_metrics
+)
+SELECT 
+    RANK() OVER (ORDER BY trending_score DESC) as rank,
+    youtuber,
+    handle_name,
+    channel_url,
+    video_count,
+    ROUND(avg_views, 0) as avg_views,
+    ROUND(avg_likes, 0) as avg_likes,
+    max_subscribers,
+    ROUND(avg_like_ratio * 100, 3) as avg_like_percentage,
+    ROUND(avg_comment_ratio * 100, 3) as avg_comment_percentage,
+    ROUND(avg_recommendations, 1) as avg_recommendations,
+    recency_category,
+    days_since_first_discovery,
+    ROUND(trending_score, 2) as trending_score,
+    (verified_count &gt; 0) as is_verified
+FROM trending_score
+WHERE trending_score &gt; 1.0  -- Filter for creators with meaningful trending score
+ORDER BY trending_score DESC, video_count DESC
+LIMIT 25;</sql><current_tab id="0"/></tab_sql></sqlb_project>

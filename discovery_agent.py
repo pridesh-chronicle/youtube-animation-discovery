@@ -1,8 +1,23 @@
 import json
 import time
 import sqlite3
+import logging
+import os
 from api_client import BrightDataClient
 from animation_detector import is_animated
+from cloud_database import CloudDatabase
+from cloud_storage import CloudStorage
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('discovery_agent.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 class DiscoveryAgent:
     def __init__(self, save_videos=False, save_frames=False):
@@ -10,154 +25,283 @@ class DiscoveryAgent:
         self.processed_videos = set()  # Global set to track processed videos
         self.animated_videos = []      # Store animated videos found
         self.queue = []               # Queue of videos to process
-        self.db_filename = "animated_videos.db"
+        
         self.save_videos = save_videos
         self.save_frames = save_frames
+
+        self.cloud_db = CloudDatabase()
+        self.cloud_storage = CloudStorage()
+        
+        # Initialize database
         self.setup_database()
         
+        logger.info("Discovery agent initialized", extra={
+            "save_videos": save_videos,
+            "save_frames": save_frames
+        })
+    
+    def is_already_processed(self, video_id):
+        """Check if video already exists in database"""
+        try:
+            with self.cloud_db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1 FROM videos WHERE video_id = %s LIMIT 1", (video_id,))
+                exists = cursor.fetchone() is not None
+                
+                if exists:
+                    logger.debug("Video already in database", extra={"video_id": video_id})
+                
+                return exists
+        except Exception as e:
+            logger.error("Failed to check duplicate", extra={
+                "video_id": video_id,
+                "error": str(e)
+            })
+            return False
+    
     def add_to_queue(self, video_ids):
         """Add video IDs to queue if not already processed"""
+        added_count = 0
+        duplicate_count = 0
+        
         for video_id in video_ids:
-            if video_id not in self.processed_videos and video_id not in self.queue:
-                self.queue.append(video_id)
-                print(f"Added to queue: {video_id}")
+            # Check multiple conditions before adding
+            if video_id in self.processed_videos:
+                logger.debug("Video already processed in session", extra={"video_id": video_id})
+                continue
+                
+            if video_id in self.queue:
+                logger.debug("Video already in queue", extra={"video_id": video_id})
+                continue
+                
+            # Check database for duplicates
+            if self.is_already_processed(video_id):
+                duplicate_count += 1
+                self.processed_videos.add(video_id)  # Mark as processed to avoid future checks
+                continue
+            
+            self.queue.append(video_id)
+            added_count += 1
+            logger.debug("Added to queue", extra={"video_id": video_id})
+        
+        logger.info("Queue update completed", extra={
+            "added_to_queue": added_count,
+            "duplicates_skipped": duplicate_count,
+            "current_queue_size": len(self.queue)
+        })
     
     def process_video_batch(self, batch_size=10):
         """Process a batch of videos from the queue"""
         if not self.queue:
+            logger.debug("No videos in queue to process")
             return False
         
         # Get batch from queue
         batch = self.queue[:batch_size]
         self.queue = self.queue[batch_size:]
         
+        logger.info("Processing video batch", extra={
+            "batch_size": len(batch),
+            "remaining_in_queue": len(self.queue),
+            "video_ids": batch
+        })
+        
         # Convert to URLs and fetch data
         video_urls = [f"https://www.youtube.com/watch?v={video_id}" for video_id in batch]
         video_data_list = self.client.fetch_videos(video_urls)
         
         if not video_data_list:
-            print("No video data returned from API")
+            logger.warning("No video data returned from API", extra={
+                "batch_size": len(batch),
+                "video_ids": batch
+            })
             return False
+        
+        batch_stats = {
+            "animated_found": 0,
+            "non_animated": 0,
+            "processing_errors": 0,
+            "total_recommendations": 0
+        }
         
         for video_data in video_data_list:
             video_id = video_data.get('video_id')
             video_url = video_data.get('url')
+            video_title = video_data.get('title', 'Unknown')
+            
+            logger.info("Processing individual video", extra={
+                "video_id": video_id,
+                "title": video_title,
+                "views": video_data.get('views'),
+                "channel": video_data.get('youtuber')
+            })
             
             # Mark as processed
             self.processed_videos.add(video_id)
             
-            # Check if animated
-            if is_animated(video_url, save_videos=self.save_videos, save_frames=self.save_frames):
-                print(f"✅ Found animated video: {video_data.get('title', 'Unknown')}")
-                self.animated_videos.append(video_data)
-                
-                # Save to SQLite database immediately
-                self.save_to_sqlite(video_data)
-                print(f"📊 Saved to database: {len(self.animated_videos)} total videos")
-                
-                # Get recommendations and add to queue
-                recommendations = self.client.get_recommendations(video_data)
-                print(f"🔍 Found {len(recommendations)} recommendations for {video_data.get('title', 'Unknown')}")
-                if recommendations:
-                    print(f"📋 Sample recommendations: {recommendations[:3]}")
-                self.add_to_queue(recommendations)
-            else:
-                print(f"❌ Not animated: {video_data.get('title', 'Unknown')}")
+            try:
+                # Check if animated
+                result = is_animated(video_url, save_videos=self.save_videos, save_frames=self.save_frames)
+
+                if isinstance(result, tuple):
+                    is_animated_result, video_path, _ = result
+                else:
+                    is_animated_result = result
+                    video_path = None
+
+                if is_animated_result:
+                    logger.info("Animated video found", extra={
+                        "video_id": video_id,
+                        "title": video_title,
+                        "views": video_data.get('views'),
+                        "channel": video_data.get('youtuber')
+                    })
+                    
+                    self.animated_videos.append(video_data)
+                    batch_stats["animated_found"] += 1
+                    
+                    # Upload video to cloud storage (no frames)
+                    video_cloud_url = None
+                    
+                    if video_path and self.cloud_storage:
+                        video_cloud_url = self.cloud_storage.upload_video(video_path, video_id)
+                    
+                    # Save with cloud URL (no frames)
+                    self.save_to_cloud_db(video_data, video_cloud_url)
+                    
+                    # Get recommendations and add to queue
+                    recommendations = self.client.get_recommendations(video_data)
+                    batch_stats["total_recommendations"] += len(recommendations)
+                    
+                    logger.info("Found recommendations", extra={
+                        "video_id": video_id,
+                        "recommendation_count": len(recommendations),
+                        "sample_recommendations": recommendations[:3] if recommendations else []
+                    })
+                    
+                    self.add_to_queue(recommendations)
+                else:
+                    logger.info("Non-animated video", extra={
+                        "video_id": video_id,
+                        "title": video_title
+                    })
+                    batch_stats["non_animated"] += 1
+                    
+            except Exception as e:
+                logger.error("Error processing video", extra={
+                    "video_id": video_id,
+                    "title": video_title,
+                    "error": str(e)
+                })
+                batch_stats["processing_errors"] += 1
+        
+        # Log batch summary
+        logger.info("Batch processing completed", extra={
+            "batch_stats": batch_stats,
+            "total_animated_found": len(self.animated_videos),
+            "total_processed": len(self.processed_videos),
+            "queue_size": len(self.queue)
+        })
         
         return True
     
     def start_discovery(self, seed_video_ids, max_iterations=100):
         """Start the discovery process"""
-        print(f"🚀 Starting discovery with {len(seed_video_ids)} seed videos")
+        logger.info("Starting discovery process", extra={
+            "seed_video_count": len(seed_video_ids),
+            "max_iterations": max_iterations,
+            "seed_videos": seed_video_ids
+        })
         
         # Add seed videos to queue
         self.add_to_queue(seed_video_ids)
         
         # Process videos
         for i in range(max_iterations):
-            print(f"\n--- Iteration {i+1} ---")
-            print(f"Queue size: {len(self.queue)}")
-            print(f"Processed: {len(self.processed_videos)}")
-            print(f"Animated found: {len(self.animated_videos)}")
+            iteration_start_time = time.time()
+            
+            logger.info("Starting iteration", extra={
+                "iteration": i+1,
+                "queue_size": len(self.queue),
+                "total_processed": len(self.processed_videos),
+                "animated_found": len(self.animated_videos)
+            })
             
             if not self.process_video_batch():
-                print("Queue empty, stopping discovery")
+                logger.info("Queue empty, stopping discovery", extra={
+                    "final_iteration": i+1,
+                    "total_animated_found": len(self.animated_videos),
+                    "total_processed": len(self.processed_videos)
+                })
                 break
+            
+            iteration_time = time.time() - iteration_start_time
+            logger.info("Iteration completed", extra={
+                "iteration": i+1,
+                "duration_seconds": round(iteration_time, 2),
+                "videos_processed_this_iteration": "batch_size",  # This would need to be tracked
+                "cumulative_animated": len(self.animated_videos)
+            })
             
             # Small delay to be respectful to APIs
             time.sleep(1)
         
+        # Final summary
+        logger.info("Discovery process completed", extra={
+            "total_iterations": min(i+1, max_iterations),
+            "total_animated_videos": len(self.animated_videos),
+            "total_videos_processed": len(self.processed_videos),
+            "final_queue_size": len(self.queue)
+        })
+        
         return self.animated_videos
     
     def setup_database(self):
-        """Create SQLite database and table"""
-        conn = sqlite3.connect(self.db_filename)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS videos (
-                video_id TEXT PRIMARY KEY,
-                title TEXT,
-                url TEXT,
-                views INTEGER,
-                likes INTEGER,
-                num_comments INTEGER,
-                subscribers INTEGER,
-                video_length INTEGER,
-                date_posted TEXT,
-                youtuber TEXT,
-                handle_name TEXT,
-                channel_url TEXT,
-                description TEXT,
-                quality_label TEXT,
-                verified BOOLEAN,
-                num_recommendations INTEGER,
-                discovered_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
-        print(f"📊 Database initialized: {self.db_filename}")
+        logger.info("Setting up database connection")
+        self.cloud_db.setup_database()
+        logger.info("Database setup completed")
     
-    def save_to_sqlite(self, video_data):
-        """Save a single video to SQLite database"""
-        conn = sqlite3.connect(self.db_filename)
-        cursor = conn.cursor()
-        
-        # Count total recommendations
-        recommendations = self.client.get_recommendations(video_data)
-        
-        cursor.execute('''
-            INSERT OR REPLACE INTO videos (
-                video_id, title, url, views, likes, num_comments, subscribers,
-                video_length, date_posted, youtuber, handle_name, channel_url,
-                description, quality_label, verified, num_recommendations
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            video_data.get('video_id'),
-            video_data.get('title'),
-            video_data.get('url'),
-            video_data.get('views'),
-            video_data.get('likes'),
-            video_data.get('num_comments'),
-            video_data.get('subscribers'),
-            video_data.get('video_length'),
-            video_data.get('date_posted'),
-            video_data.get('youtuber'),
-            video_data.get('handle_name'),
-            video_data.get('channel_url'),
-            video_data.get('description', '')[:500],  # Limit description length
-            video_data.get('quality_label'),
-            video_data.get('verified'),
-            len(recommendations)
-        ))
-        
-        conn.commit()
-        conn.close()
+    def save_to_cloud_db(self, video_data, video_cloud_url=None):
+        video_id = video_data.get('video_id')
+        try:
+            recommendations = self.client.get_recommendations(video_data)
+            video_data['num_recommendations'] = len(recommendations)
+
+            self.cloud_db.save_video(video_data, video_cloud_url)
+            
+            logger.info("Video saved to database", extra={
+                "video_id": video_id,
+                "title": video_data.get('title'),
+                "has_cloud_url": bool(video_cloud_url),
+                "recommendation_count": len(recommendations)
+            })
+
+            if video_cloud_url:
+                logger.info("Video uploaded to cloud storage", extra={
+                    "video_id": video_id,
+                    "cloud_url": video_cloud_url
+                })
+
+        except Exception as e:
+            logger.error("Failed to save video to database", extra={
+                "video_id": video_id,
+                "title": video_data.get('title'),
+                "error": str(e)
+            })
     
     def save_results(self, filename="animated_videos.json"):
         """Save discovered animated videos to file"""
-        with open(filename, 'w') as f:
-            json.dump(self.animated_videos, f, indent=2)
-        print(f"💾 Saved {len(self.animated_videos)} animated videos to {filename}") 
+        try:
+            with open(filename, 'w') as f:
+                json.dump(self.animated_videos, f, indent=2)
+            
+            logger.info("Results saved to file", extra={
+                "output_file": filename,
+                "video_count": len(self.animated_videos),
+                "file_size_mb": round(os.path.getsize(filename) / (1024*1024), 2)
+            })
+        except Exception as e:
+            logger.error("Failed to save results to file", extra={
+                "output_file": filename,
+                "error": str(e)
+            }) 
