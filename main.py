@@ -5,17 +5,19 @@ from discovery_agent import DiscoveryAgent
 def main():
     # Example seed videos (you can change these)
     seed_videos = [
-        "hwiyUuYZLHE",  # Your example video
-        "RtU8nBnpFVE",  # Your example video
-        "Bl1FOKpFY2Q"   # Your example video
+        # "hwiyUuYZLHE",  # Your example video
+        # "RtU8nBnpFVE",  # Your example video
+        # "Bl1FOKpFY2Q"   # Your example video
+        "KJvzuJvDHlI"
     ]
     
     # Configuration flags for saving videos and frames
     save_videos = True   # Set to False to disable video saving
     save_frames = True   # Set to False to disable frame saving
+    save_ytdlp_json = False  # Set to True to save separate yt-dlp JSON files
     
     # Create and run discovery agent
-    agent = DiscoveryAgent(save_videos=save_videos, save_frames=save_frames)
+    agent = DiscoveryAgent(save_videos=save_videos, save_frames=save_frames, save_ytdlp_json=save_ytdlp_json)
     
     print("🎬 YouTube Animation Discovery Agent")
     print("=" * 40)

@@ -30,7 +30,8 @@ def download_video(url, output_path="video.mp4", save_to_persistent=False):
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4',
         'merge_output_format': 'mp4',
         'quiet': True,
-        'overwrites': True
+        'overwrites': True,
+        'cookiefile': 'cookies.txt',  # Use your own cookies file if needed
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:

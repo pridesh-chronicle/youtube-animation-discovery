@@ -3,9 +3,10 @@ import time
 import sqlite3
 from api_client import BrightDataClient
 from animation_detector import is_animated
+from ytdlp_metadata_extractor import extract_ytdlp_metadata
 
 class DiscoveryAgent:
-    def __init__(self, save_videos=False, save_frames=False):
+    def __init__(self, save_videos=False, save_frames=False, save_ytdlp_json=False):
         self.client = BrightDataClient()
         self.processed_videos = set()  # Global set to track processed videos
         self.animated_videos = []      # Store animated videos found
@@ -13,6 +14,7 @@ class DiscoveryAgent:
         self.db_filename = "animated_videos.db"
         self.save_videos = save_videos
         self.save_frames = save_frames
+        self.save_ytdlp_json = save_ytdlp_json
         self.setup_database()
         
     def add_to_queue(self, video_ids):
@@ -49,6 +51,14 @@ class DiscoveryAgent:
             # Check if animated
             if is_animated(video_url, save_videos=self.save_videos, save_frames=self.save_frames):
                 print(f"✅ Found animated video: {video_data.get('title', 'Unknown')}")
+                
+                # Extract yt-dlp metadata only for animated videos
+                ytdlp_metadata = extract_ytdlp_metadata(video_url, video_id, save_json=self.save_ytdlp_json)
+                
+                # Merge yt-dlp metadata with video_data
+                if ytdlp_metadata:
+                    video_data.update(ytdlp_metadata)
+                
                 self.animated_videos.append(video_data)
                 
                 # Save to SQLite database immediately
