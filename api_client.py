@@ -7,6 +7,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Custom exceptions for better error handling
+class BrightDataTimeoutError(Exception):
+    """Raised when BrightData API times out"""
+    pass
+
+class BrightDataAPIError(Exception): 
+    """Raised when BrightData API returns an error"""
+    pass
+
 # Configure logging for API client
 logger = logging.getLogger(__name__)
 
@@ -118,14 +127,14 @@ class BrightDataClient:
                 "status_code": response.status_code,
                 "response_text": response.text[:500]
             })
-            return []
+            raise BrightDataAPIError(f"JSON decode error: {str(e)}")
         
         if 'snapshot_id' not in result:
             logger.error("No snapshot_id in response", extra={
                 "response": result,
                 "status_code": response.status_code
             })
-            return []
+            raise BrightDataAPIError(f"No snapshot_id in response: {result}")
         
         snapshot_id = result['snapshot_id']
         logger.info("Received snapshot_id, waiting for data", extra={
@@ -179,7 +188,9 @@ class BrightDataClient:
                     "snapshot_id": snapshot_id,
                     "poll_count": poll_count
                 })
-                return []
+                # For polling errors, wait a bit and continue rather than failing completely
+                time.sleep(10)
+                continue
             
             # Check if data is a list (direct video data)
             if isinstance(data, list):
@@ -213,7 +224,7 @@ class BrightDataClient:
                         "response": data,
                         "total_wait_time": round(elapsed_time, 1)
                     })
-                    return []
+                    raise BrightDataAPIError(f"Snapshot processing failed: {data}")
                 else:
                     logger.debug("Snapshot still processing, waiting...", extra={
                         "snapshot_id": snapshot_id,
@@ -227,7 +238,8 @@ class BrightDataClient:
                     "response": data,
                     "poll_count": poll_count
                 })
-                return []
+                # Wait a bit and continue polling for unexpected formats
+                time.sleep(10)
         
         logger.error("Timeout waiting for snapshot", extra={
             "snapshot_id": snapshot_id,
@@ -235,7 +247,7 @@ class BrightDataClient:
             "poll_count": poll_count,
             "elapsed_seconds": round(time.time() - start_time, 1)
         })
-        return []
+        raise BrightDataTimeoutError(f"Timeout waiting for snapshot {snapshot_id} after {max_wait_time}s")
     
     def fetch_snapshot_data(self, snapshot_id):
         """Fetch the actual data from a ready snapshot"""
@@ -273,7 +285,7 @@ class BrightDataClient:
                 "response_text": response.text[:500],
                 "snapshot_id": snapshot_id
             })
-            return []
+            raise BrightDataAPIError(f"JSON decode error in final fetch: {str(e)}")
     
     def get_recommendations(self, video_data):
         """Extract recommendation video IDs from video data"""

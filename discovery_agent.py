@@ -3,7 +3,7 @@ import time
 import sqlite3
 import logging
 import os
-from api_client import BrightDataClient
+from api_client import BrightDataClient, BrightDataTimeoutError, BrightDataAPIError
 from animation_detector import is_animated
 from cloud_database import CloudDatabase
 from cloud_storage import CloudStorage
@@ -90,8 +90,8 @@ class DiscoveryAgent:
             "current_queue_size": len(self.queue)
         })
     
-    def process_video_batch(self, batch_size=10):
-        """Process a batch of videos from the queue"""
+    def process_video_batch(self, batch_size=10, max_retries=2):
+        """Process a batch of videos from the queue with retry logic"""
         if not self.queue:
             logger.debug("No videos in queue to process")
             return False
@@ -100,22 +100,91 @@ class DiscoveryAgent:
         batch = self.queue[:batch_size]
         self.queue = self.queue[batch_size:]
         
-        logger.info("Processing video batch", extra={
-            "batch_size": len(batch),
-            "remaining_in_queue": len(self.queue),
-            "video_ids": batch
-        })
-        
-        # Convert to URLs and fetch data
+        # Convert to URLs
         video_urls = [f"https://www.youtube.com/watch?v={video_id}" for video_id in batch]
-        video_data_list = self.client.fetch_videos(video_urls)
+        video_data_list = None
         
+        # Retry logic for API calls
+        for attempt in range(max_retries + 1):
+            try:
+                logger.info("Processing video batch", extra={
+                    "batch_size": len(batch),
+                    "remaining_in_queue": len(self.queue),
+                    "video_ids": batch,
+                    "attempt": attempt + 1,
+                    "max_attempts": max_retries + 1
+                })
+                
+                # Fetch data with timeout handling
+                video_data_list = self.client.fetch_videos(video_urls)
+                
+                if not video_data_list:
+                    raise BrightDataAPIError("No video data returned from API")
+                
+                # Success - break out of retry loop
+                logger.info("Successfully fetched video data", extra={
+                    "batch_size": len(batch),
+                    "data_count": len(video_data_list),
+                    "attempt": attempt + 1
+                })
+                break
+                
+            except BrightDataTimeoutError as e:
+                if attempt < max_retries:
+                    wait_time = (attempt + 1) * 30  # 30s, 60s, etc.
+                    logger.warning("BrightData API timeout - retrying", extra={
+                        "batch_size": len(batch),
+                        "attempt": attempt + 1,
+                        "max_attempts": max_retries + 1,
+                        "wait_time": wait_time,
+                        "error": str(e)
+                    })
+                    time.sleep(wait_time)
+                else:
+                    logger.warning("Max retries exceeded due to timeout - skipping batch", extra={
+                        "batch_size": len(batch),
+                        "video_ids": batch,
+                        "max_retries": max_retries,
+                        "error": str(e)
+                    })
+                    # Mark these videos as processed to avoid infinite retry loops
+                    for video_id in batch:
+                        self.processed_videos.add(video_id)
+                    return True  # Continue processing other batches
+                    
+            except Exception as e:
+                if attempt < max_retries:
+                    wait_time = (attempt + 1) * 15  # Shorter wait for general errors
+                    logger.warning("API error - retrying", extra={
+                        "batch_size": len(batch),
+                        "attempt": attempt + 1,
+                        "max_attempts": max_retries + 1,
+                        "wait_time": wait_time,
+                        "error": str(e)
+                    })
+                    time.sleep(wait_time)
+                else:
+                    logger.error("Max retries exceeded due to API error - skipping batch", extra={
+                        "batch_size": len(batch),
+                        "video_ids": batch,
+                        "max_retries": max_retries,
+                        "error": str(e)
+                    })
+                    # Mark these videos as processed to avoid infinite retry loops
+                    for video_id in batch:
+                        self.processed_videos.add(video_id)
+                    return True  # Continue processing other batches
+        
+        # If we get here without video_data_list, something went wrong
         if not video_data_list:
-            logger.warning("No video data returned from API", extra={
+            logger.error("Failed to get video data after all retries", extra={
                 "batch_size": len(batch),
                 "video_ids": batch
             })
-            return False
+            # Mark as processed and continue
+            for video_id in batch:
+                self.processed_videos.add(video_id)
+            return True
         
         batch_stats = {
             "animated_found": 0,

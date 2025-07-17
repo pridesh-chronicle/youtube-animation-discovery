@@ -7,7 +7,7 @@ import threading
 import time
 import psutil
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 from discovery_agent import DiscoveryAgent
 
@@ -20,13 +20,53 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Enable CORS for all origins (more permissive for development)
+# Enable CORS for all origins (very permissive for Lovable/ngrok compatibility)
 CORS(app, 
     origins="*",
-    methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
-    supports_credentials=False
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=[
+        "Content-Type", 
+        "Authorization", 
+        "X-Requested-With",
+        "Accept",
+        "Origin",
+        "Access-Control-Request-Method",
+        "Access-Control-Request-Headers",
+        "ngrok-skip-browser-warning",  # Specific for ngrok/Lovable
+        "User-Agent",
+        "Cache-Control",
+        "Pragma"
+    ],
+    expose_headers=[
+        "Access-Control-Allow-Origin",
+        "Access-Control-Allow-Headers",
+        "Access-Control-Allow-Methods"
+    ],
+    supports_credentials=False,
+    max_age=86400  # Cache preflight for 24 hours
 )
+# Manual CORS preflight handler for maximum compatibility (especially Lovable/ngrok)
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = make_response()
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add('Access-Control-Allow-Headers', 
+                           "Content-Type,Authorization,X-Requested-With,Accept,Origin,Access-Control-Request-Method,Access-Control-Request-Headers,ngrok-skip-browser-warning,User-Agent,Cache-Control,Pragma")
+        response.headers.add('Access-Control-Allow-Methods', 
+                           "GET,PUT,POST,DELETE,OPTIONS,PATCH")
+        response.headers.add('Access-Control-Max-Age', '86400')
+        return response
+
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 
+                        "Content-Type,Authorization,X-Requested-With,Accept,Origin,Access-Control-Request-Method,Access-Control-Request-Headers,ngrok-skip-browser-warning,User-Agent,Cache-Control,Pragma")
+    response.headers.add('Access-Control-Allow-Methods', 
+                        "GET,PUT,POST,DELETE,OPTIONS,PATCH")
+    return response
+
 # Global variables to track discovery state
 discovery_stats = {
     "status": "idle",
@@ -107,7 +147,21 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "discovery_status": discovery_stats["status"]
+        "discovery_status": discovery_stats["status"],
+        "cors_enabled": True
+    }), 200
+
+@app.route('/cors-test', methods=['GET', 'POST', 'OPTIONS'])
+def cors_test():
+    """CORS test endpoint specifically for Lovable integration"""
+    return jsonify({
+        "message": "CORS is working!",
+        "method": request.method,
+        "headers_received": dict(request.headers),
+        "origin": request.headers.get('Origin', 'No origin header'),
+        "user_agent": request.headers.get('User-Agent', 'No user agent'),
+        "ngrok_header": request.headers.get('ngrok-skip-browser-warning', 'Not present'),
+        "timestamp": datetime.now().isoformat()
     }), 200
 
 @app.route('/status', methods=['GET'])
