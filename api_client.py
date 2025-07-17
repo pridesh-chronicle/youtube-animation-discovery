@@ -54,14 +54,13 @@ class BrightDataClient:
                 "payload": payload if len(json.dumps(payload)) < 1000 else f"{str(payload)[:500]}...(truncated)"
             })
     
-    def _log_response(self, response, request_start_time):
+    def _log_response(self, response, request_start_time, response_data=None):
         """Log HTTP response details"""
         duration = time.time() - request_start_time
+        response_size = len(response.content)
         
-        try:
-            response_data = response.json() if response.content else {}
-            response_size = len(response.content)
-            
+        # Use provided response_data or basic info if JSON parsing failed
+        if response_data is not None:
             logger.info(f"📡 BrightData API Response: {response.status_code}", extra={
                 "status_code": response.status_code,
                 "duration_seconds": round(duration, 3),
@@ -71,12 +70,6 @@ class BrightDataClient:
                 "response_type": type(response_data).__name__,
                 "response_length": len(response_data) if isinstance(response_data, list) else None
             })
-            
-            # Log response headers (useful for debugging)
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("Response headers", extra={
-                    "headers": dict(response.headers)
-                })
             
             # Log response data (with truncation for large responses)
             if logger.isEnabledFor(logging.DEBUG):
@@ -88,13 +81,20 @@ class BrightDataClient:
                     logger.debug("Response data", extra={
                         "response_data": response_data
                     })
-            
-        except Exception as e:
-            logger.warning("Could not parse response as JSON", extra={
-                "error": str(e),
+        else:
+            # Log basic info if we couldn't parse JSON
+            logger.info(f"📡 BrightData API Response: {response.status_code}", extra={
                 "status_code": response.status_code,
                 "duration_seconds": round(duration, 3),
+                "response_size_bytes": response_size,
+                "content_type": response.headers.get('content-type', 'unknown'),
                 "response_text_preview": response.text[:500] if response.text else "No content"
+            })
+        
+        # Log response headers (useful for debugging)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("Response headers", extra={
+                "headers": dict(response.headers)
             })
     
     def fetch_videos(self, video_urls):
@@ -117,11 +117,12 @@ class BrightDataClient:
         request_start_time = time.time()
         
         response = requests.post(url, headers=headers, json=payload)
-        self._log_response(response, request_start_time)
         
         try:
             result = response.json()
+            self._log_response(response, request_start_time, result)
         except requests.exceptions.JSONDecodeError as e:
+            self._log_response(response, request_start_time, None)
             logger.error("Failed to parse initial request response as JSON", extra={
                 "error": str(e),
                 "status_code": response.status_code,
@@ -176,11 +177,12 @@ class BrightDataClient:
             request_start_time = time.time()
             
             response = requests.get(url, headers=headers)
-            self._log_response(response, request_start_time)
             
             try:
                 data = response.json()
+                self._log_response(response, request_start_time, data)
             except requests.exceptions.JSONDecodeError as e:
+                self._log_response(response, request_start_time, None)
                 logger.error("JSON decode error during polling", extra={
                     "error": str(e),
                     "status_code": response.status_code,
@@ -267,10 +269,10 @@ class BrightDataClient:
         request_start_time = time.time()
         
         response = requests.get(url, headers=headers)
-        self._log_response(response, request_start_time)
         
         try:
             data = response.json()
+            self._log_response(response, request_start_time, data)
             logger.info("Successfully fetched snapshot data", extra={
                 "snapshot_id": snapshot_id,
                 "data_type": type(data).__name__,
@@ -279,6 +281,7 @@ class BrightDataClient:
             })
             return data
         except requests.exceptions.JSONDecodeError as e:
+            self._log_response(response, request_start_time, None)
             logger.error("JSON decode error in final data fetch", extra={
                 "error": str(e),
                 "status_code": response.status_code,
