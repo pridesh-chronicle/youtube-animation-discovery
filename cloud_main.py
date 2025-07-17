@@ -5,7 +5,6 @@ import logging
 import json
 import threading
 import time
-import psutil
 from datetime import datetime
 from flask import Flask, request, jsonify, make_response
 from discovery_agent import DiscoveryAgent
@@ -133,6 +132,92 @@ def cors_test():
         "ngrok_header": request.headers.get('ngrok-skip-browser-warning', 'Not present'),
         "timestamp": datetime.now().isoformat()
     }), 200
+
+@app.route('/metrics', methods=['GET'])
+def get_metrics():
+    """Get database metrics - total videos and creators collected"""
+    try:
+        from cloud_database import CloudDatabase
+        db = CloudDatabase()
+        
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Total videos count
+            cursor.execute("SELECT COUNT(*) FROM videos_full")
+            total_videos = cursor.fetchone()[0]
+            
+            # Total unique creators (using youtuber field)
+            cursor.execute("SELECT COUNT(DISTINCT youtuber) FROM videos_full WHERE youtuber IS NOT NULL AND youtuber != ''")
+            total_creators = cursor.fetchone()[0]
+            
+            # Total unique channels (using channel_id)
+            cursor.execute("SELECT COUNT(DISTINCT channel_id) FROM videos_full WHERE channel_id IS NOT NULL AND channel_id != ''")
+            total_channels = cursor.fetchone()[0]
+            
+            # Total views across all videos
+            cursor.execute("SELECT SUM(views) FROM videos_full WHERE views IS NOT NULL")
+            total_views_result = cursor.fetchone()[0]
+            total_views = int(total_views_result) if total_views_result else 0
+            
+            # Most recent discovery
+            cursor.execute("SELECT MAX(discovered_at) FROM videos_full")
+            latest_discovery = cursor.fetchone()[0]
+            
+            # Top 5 creators by video count
+            cursor.execute("""
+                SELECT youtuber, COUNT(*) as video_count, SUM(views) as total_views
+                FROM videos_full 
+                WHERE youtuber IS NOT NULL AND youtuber != ''
+                GROUP BY youtuber 
+                ORDER BY video_count DESC 
+                LIMIT 5
+            """)
+            top_creators = []
+            for row in cursor.fetchall():
+                top_creators.append({
+                    "creator": row[0],
+                    "video_count": row[1],
+                    "total_views": int(row[2]) if row[2] else 0
+                })
+            
+            # Discovery stats by date (last 7 days)
+            cursor.execute("""
+                SELECT DATE(discovered_at) as discovery_date, COUNT(*) as videos_discovered
+                FROM videos_full 
+                WHERE discovered_at >= CURRENT_DATE - INTERVAL '7 days'
+                GROUP BY DATE(discovered_at)
+                ORDER BY discovery_date DESC
+            """)
+            recent_discoveries = []
+            for row in cursor.fetchall():
+                recent_discoveries.append({
+                    "date": row[0].isoformat() if row[0] else None,
+                    "videos_discovered": row[1]
+                })
+        
+        return jsonify({
+            "timestamp": datetime.now().isoformat(),
+            "database_metrics": {
+                "total_videos": total_videos,
+                "total_creators": total_creators,
+                "total_channels": total_channels,
+                "total_views": total_views,
+                "latest_discovery": latest_discovery.isoformat() if latest_discovery else None
+            },
+            "top_creators": top_creators,
+            "recent_discoveries": recent_discoveries,
+            "discovery_agent_status": discovery_stats["status"],
+            "current_queue_size": discovery_stats.get("queue_size", 0)
+        }), 200
+        
+    except Exception as e:
+        logger.error("Failed to get database metrics", extra={"error": str(e)})
+        return jsonify({
+            "error": "Failed to retrieve metrics",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
 
 @app.route('/status', methods=['GET'])
 def get_status():
