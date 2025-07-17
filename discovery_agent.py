@@ -45,7 +45,7 @@ class DiscoveryAgent:
         try:
             with self.cloud_db.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT 1 FROM videos WHERE video_id = %s LIMIT 1", (video_id,))
+                cursor.execute("SELECT 1 FROM videos_full WHERE video_id = %s LIMIT 1", (video_id,))
                 exists = cursor.fetchone() is not None
                 
                 if exists:
@@ -205,31 +205,33 @@ class DiscoveryAgent:
         
         return True
     
-    def start_discovery(self, seed_video_ids, max_iterations=100):
-        """Start the discovery process"""
+    def start_discovery(self, seed_video_ids):
+        """Start the discovery process - runs until queue is empty"""
         logger.info("Starting discovery process", extra={
             "seed_video_count": len(seed_video_ids),
-            "max_iterations": max_iterations,
-            "seed_videos": seed_video_ids
+            "seed_videos": seed_video_ids,
+            "mode": "run_until_queue_empty"
         })
         
         # Add seed videos to queue
         self.add_to_queue(seed_video_ids)
         
-        # Process videos
-        for i in range(max_iterations):
+        # Process videos until queue is empty
+        iteration = 0
+        while self.queue:  # Continue while queue has videos
+            iteration += 1
             iteration_start_time = time.time()
             
             logger.info("Starting iteration", extra={
-                "iteration": i+1,
+                "iteration": iteration,
                 "queue_size": len(self.queue),
                 "total_processed": len(self.processed_videos),
                 "animated_found": len(self.animated_videos)
             })
             
             if not self.process_video_batch():
-                logger.info("Queue empty, stopping discovery", extra={
-                    "final_iteration": i+1,
+                logger.info("No videos processed in batch, stopping discovery", extra={
+                    "final_iteration": iteration,
                     "total_animated_found": len(self.animated_videos),
                     "total_processed": len(self.processed_videos)
                 })
@@ -237,10 +239,10 @@ class DiscoveryAgent:
             
             iteration_time = time.time() - iteration_start_time
             logger.info("Iteration completed", extra={
-                "iteration": i+1,
+                "iteration": iteration,
                 "duration_seconds": round(iteration_time, 2),
-                "videos_processed_this_iteration": "batch_size",  # This would need to be tracked
-                "cumulative_animated": len(self.animated_videos)
+                "cumulative_animated": len(self.animated_videos),
+                "queue_remaining": len(self.queue)
             })
             
             # Small delay to be respectful to APIs
@@ -248,10 +250,11 @@ class DiscoveryAgent:
         
         # Final summary
         logger.info("Discovery process completed", extra={
-            "total_iterations": min(i+1, max_iterations),
+            "total_iterations": iteration,
             "total_animated_videos": len(self.animated_videos),
             "total_videos_processed": len(self.processed_videos),
-            "final_queue_size": len(self.queue)
+            "final_queue_size": len(self.queue),
+            "completion_reason": "queue_empty" if not self.queue else "processing_failed"
         })
         
         return self.animated_videos

@@ -1,61 +1,85 @@
 import os
-import tempfile
-import shutil
 import logging
-from downloader import download_video
-from frame_extractor import extract_frames
-from animation_checker import analyze_video_frames
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def is_animated(video_url, save_videos=False, save_frames=False):
     """
-    Determine if a YouTube video is animated or live-action.
+    Determine if a YouTube video is animated or live-action using Gemini AI.
     
     Args:
         video_url (str): YouTube video URL
-        save_videos (bool): Whether to save videos to persistent storage
-        save_frames (bool): Whether to save frames to persistent storage
+        save_videos (bool): Ignored (no longer used, kept for compatibility)
+        save_frames (bool): Ignored (no longer used, kept for compatibility)
         
     Returns:
         bool: True if animated, False if live-action
     """
-    temp_dir = None
-    video_path = None
-    
     try:
-        # Create temporary directory for this video
-        temp_dir = tempfile.mkdtemp(prefix="ytdl_")
-        video_path = os.path.join(temp_dir, "video.mp4")
+        # Get Gemini API key
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            logger.error("GEMINI_API_KEY not found in environment variables")
+            return False
         
-        logger.info(f"Processing video: {video_url}")
-        # Download video
-        download_video(video_url, video_path, save_to_persistent=save_videos)
+        # Configure Gemini
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name="gemini-2.0-flash")
         
-        # Extract frames
-        frames_dir = os.path.join(temp_dir, "frames")
-        frame_paths = extract_frames(video_path, video_url, frames_dir, save_to_persistent=save_frames)
-        # Analyze frames with Gemini
-        classification = analyze_video_frames(frame_paths)
+        logger.info(f"Processing video with Gemini: {video_url}")
         
-        # Parse classification result
-        classification_clean = classification.lower().strip()
-        is_animated_video = classification_clean == "true"
+        # Create prompt for Gemini
+        prompt = f"""
+        Please analyze this YouTube video and determine if it's ANIMATED or LIVE-ACTION content.
+
+        YouTube URL: {video_url}
+
+        ANIMATED content includes:
+        - Traditional 2D animation (cartoons, anime)
+        - 3D computer animation (Pixar-style, CGI movies/shows)
+        - Motion graphics and digital animations
+        - Game footage with animated characters
+        - Drawn/illustrated content and characters
+        - Stop-motion animation
+        - Mixed media with predominantly animated elements
+
+        LIVE-ACTION content includes:
+        - Real people (vlogs, tutorials, interviews, reviews)
+        - Documentary footage with real people/places
+        - Live-recorded content with real actors
+        - Real-world photography and videography
+        - Gaming videos with real people (even if game is animated)
+        - Music videos with real performers
+
+        Please respond with ONLY one word:
+        - "ANIMATED" if the video is primarily animated content
+        - "LIVE-ACTION" if the video is primarily live-action content
+
+        Your response:
+        """
         
-        logger.info(f"Classification: {classification} -> {'Animated' if is_animated_video else 'Live-action'}")
+        # Ask Gemini
+        response = model.generate_content(prompt)
+        raw_response = response.text.strip()
         
-        return is_animated_video, video_path, frames_dir
+        logger.info(f"Gemini raw response: {raw_response}")
+        
+        # Parse response
+        response_upper = raw_response.upper()
+        is_animated_video = "ANIMATED" in response_upper and "LIVE-ACTION" not in response_upper
+        
+        # Log result
+        result_text = "Animated" if is_animated_video else "Live-action"
+        logger.info(f"Classification: {raw_response} -> {result_text}")
+        
+        return is_animated_video
         
     except Exception as e:
         logger.error(f"Error processing video {video_url}: {str(e)}")
         return False
-        
-    finally:
-        # Clean up temporary files (always clean temp dir, persistent files are saved separately)
-        if temp_dir and os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir)
-                logger.debug(f"Cleaned up temporary directory: {temp_dir}")
-            except Exception as e:
-                logger.warning(f"Failed to clean up temporary directory {temp_dir}: {str(e)}")

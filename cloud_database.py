@@ -30,7 +30,8 @@ class CloudDatabase:
             logger.debug("Database connection established")
             yield conn
         except Exception as e:
-            logger.error("Database connection failed", extra={"error": str(e)})
+            logger.error(f"Database connection failed: {str(e)}")
+            logger.error(f"Connection details - Host: {os.getenv('DB_HOST')}, DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}")
             raise
         finally:
             try:
@@ -40,44 +41,118 @@ class CloudDatabase:
                 pass
 
     def setup_database(self):
-        """Create tables in Cloud SQL"""
+        """Create tables in Cloud SQL with comprehensive BrightData schema"""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS videos (
+                    CREATE TABLE IF NOT EXISTS videos_full (
+                        -- Basic Video Information
                         video_id TEXT PRIMARY KEY,
                         title TEXT,
                         url TEXT,
-                        views BIGINT,
-                        likes INTEGER,
-                        num_comments INTEGER,
-                        subscribers BIGINT,
                         video_length INTEGER,
+                        upload_date TIMESTAMP,
                         date_posted TIMESTAMP,
+                        
+                        -- Channel Information
                         youtuber TEXT,
                         handle_name TEXT,
                         channel_url TEXT,
-                        description TEXT,
-                        quality_label TEXT,
+                        channel_id TEXT,
                         verified BOOLEAN,
+                        
+                        -- Engagement Metrics
+                        views BIGINT,
+                        likes INTEGER,
+                        dislikes INTEGER,
+                        num_comments INTEGER,
+                        subscribers BIGINT,
+                        
+                        -- Content Details
+                        description TEXT,
+                        category TEXT,
+                        tags JSONB,
+                        hashtags JSONB,
+                        language TEXT,
+                        
+                        -- Technical Details
+                        quality_label TEXT,
+                        fps INTEGER,
+                        codecs JSONB,
+                        formats JSONB,
+                        thumbnails JSONB,
+                        captions JSONB,
+                        
+                        -- Transcript Data
+                        formatted_transcript JSONB,
+                        transcript_text TEXT,
+                        
+                        -- Recommendations & Related
+                        recommended_videos JSONB,
+                        next_recommended_videos JSONB,
+                        related_videos JSONB,
+                        
+                        -- Live Stream Data
+                        is_live BOOLEAN,
+                        was_live BOOLEAN,
+                        live_start_time TIMESTAMP,
+                        live_end_time TIMESTAMP,
+                        concurrent_viewers INTEGER,
+                        
+                        -- Age & Restrictions
+                        age_limit INTEGER,
+                        is_family_friendly BOOLEAN,
+                        content_rating TEXT,
+                        
+                        -- Monetization
+                        is_monetized BOOLEAN,
+                        has_ads BOOLEAN,
+                        
+                        -- Performance Metrics
+                        view_count_24h INTEGER,
+                        like_ratio FLOAT,
+                        engagement_rate FLOAT,
+                        
+                        -- Geographic Data
+                        country TEXT,
+                        region TEXT,
+                        
+                        -- Video Analysis
+                        duration_category TEXT,
+                        content_type TEXT,
+                        
+                        -- Discovery Agent Fields
                         num_recommendations INTEGER,
                         discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        video_cloud_url TEXT
+                        video_cloud_url TEXT,
+                        is_animated BOOLEAN DEFAULT TRUE
                     );
                     
-                    CREATE INDEX IF NOT EXISTS idx_discovered_at ON videos(discovered_at);
-                    CREATE INDEX IF NOT EXISTS idx_youtuber ON videos(youtuber);
-                    CREATE INDEX IF NOT EXISTS idx_views ON videos(views);
+                    -- Create comprehensive indexes
+                    CREATE INDEX IF NOT EXISTS idx_discovered_at ON videos_full(discovered_at);
+                    CREATE INDEX IF NOT EXISTS idx_youtuber ON videos_full(youtuber);
+                    CREATE INDEX IF NOT EXISTS idx_views ON videos_full(views);
+                    CREATE INDEX IF NOT EXISTS idx_upload_date ON videos_full(upload_date);
+                    CREATE INDEX IF NOT EXISTS idx_category ON videos_full(category);
+                    CREATE INDEX IF NOT EXISTS idx_language ON videos_full(language);
+                    CREATE INDEX IF NOT EXISTS idx_is_animated ON videos_full(is_animated);
+                    
+                    -- JSONB indexes for complex queries
+                    CREATE INDEX IF NOT EXISTS idx_tags_gin ON videos_full USING gin(tags);
+                    CREATE INDEX IF NOT EXISTS idx_hashtags_gin ON videos_full USING gin(hashtags);
+                    CREATE INDEX IF NOT EXISTS idx_recommended_videos_gin ON videos_full USING gin(recommended_videos);
                 """)
                 conn.commit()
                 
                 # Check if table exists and get count
-                cursor.execute("SELECT COUNT(*) FROM videos")
+                cursor.execute("SELECT COUNT(*) FROM videos_full")
                 existing_count = cursor.fetchone()[0]
                 
-                logger.info("Database setup completed", extra={
-                    "existing_videos": existing_count
+                logger.info("Comprehensive database setup completed", extra={
+                    "table": "videos_full",
+                    "existing_videos": existing_count,
+                    "schema": "comprehensive_brightdata"
                 })
                 
         except Exception as e:
@@ -85,7 +160,9 @@ class CloudDatabase:
             raise
 
     def save_video(self, video_data, video_cloud_url=None):
-        """Save video to Cloud SQL"""
+        """Save comprehensive video data to Cloud SQL"""
+        import json
+        
         video_id = video_data.get('video_id')
         
         try:
@@ -93,55 +170,143 @@ class CloudDatabase:
                 cursor = conn.cursor()
                 
                 # Check if video already exists
-                cursor.execute("SELECT 1 FROM videos WHERE video_id = %s", (video_id,))
+                cursor.execute("SELECT 1 FROM videos_full WHERE video_id = %s", (video_id,))
                 is_update = cursor.fetchone() is not None
                 
+                # Helper function to safely convert to JSON
+                def to_json(data):
+                    if data is None:
+                        return None
+                    # Always ensure valid JSON format
+                    try:
+                        return json.dumps(data)
+                    except (TypeError, ValueError):
+                        # If it can't be serialized, convert to string and then to JSON
+                        return json.dumps(str(data))
+                
+                # Prepare data with all BrightData fields
                 cursor.execute("""
-                    INSERT INTO videos (
-                        video_id, title, url, views, likes, num_comments, subscribers,
-                        video_length, date_posted, youtuber, handle_name, channel_url,
-                        description, quality_label, verified, num_recommendations,
-                        video_cloud_url
+                    INSERT INTO videos_full (
+                        video_id, title, url, video_length, upload_date, date_posted,
+                        youtuber, handle_name, channel_url, channel_id, verified,
+                        views, likes, dislikes, num_comments, subscribers,
+                        description, category, tags, hashtags, language,
+                        quality_label, fps, codecs, formats, thumbnails, captions,
+                        formatted_transcript, transcript_text,
+                        recommended_videos, next_recommended_videos, related_videos,
+                        is_live, was_live, live_start_time, live_end_time, concurrent_viewers,
+                        age_limit, is_family_friendly, content_rating,
+                        is_monetized, has_ads,
+                        view_count_24h, like_ratio, engagement_rate,
+                        country, region,
+                        duration_category, content_type,
+                        num_recommendations, video_cloud_url, is_animated
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (video_id) DO UPDATE SET
                         title = EXCLUDED.title,
                         views = EXCLUDED.views,
                         likes = EXCLUDED.likes,
+                        subscribers = EXCLUDED.subscribers,
+                        recommended_videos = EXCLUDED.recommended_videos,
                         video_cloud_url = EXCLUDED.video_cloud_url
                 """, (
+                    # Basic Video Information
                     video_data.get('video_id'),
                     video_data.get('title'),
                     video_data.get('url'),
-                    video_data.get('views'),
-                    video_data.get('likes'),
-                    video_data.get('num_comments'),
-                    video_data.get('subscribers'),
                     video_data.get('video_length'),
+                    video_data.get('upload_date'),
                     video_data.get('date_posted'),
+                    
+                    # Channel Information
                     video_data.get('youtuber'),
                     video_data.get('handle_name'),
                     video_data.get('channel_url'),
-                    (video_data.get('description', '') or '')[:500],
-                    video_data.get('quality_label'),
+                    video_data.get('channel_id'),
                     video_data.get('verified'),
-                    0,  # num_recommendations will be updated separately
-                    video_cloud_url
+                    
+                    # Engagement Metrics
+                    video_data.get('views'),
+                    video_data.get('likes'),
+                    video_data.get('dislikes'),
+                    video_data.get('num_comments'),
+                    video_data.get('subscribers'),
+                    
+                    # Content Details
+                    (video_data.get('description', '') or '')[:1000],  # Increased limit
+                    video_data.get('category'),
+                    to_json(video_data.get('tags')),
+                    to_json(video_data.get('hashtags')),
+                    video_data.get('language'),
+                    
+                    # Technical Details
+                    video_data.get('quality_label'),
+                    video_data.get('fps'),
+                    to_json(video_data.get('codecs')),
+                    to_json(video_data.get('formats')),
+                    to_json(video_data.get('thumbnails')),
+                    to_json(video_data.get('captions')),
+                    
+                    # Transcript Data
+                    to_json(video_data.get('formatted_transcript')),
+                    video_data.get('transcript_text'),
+                    
+                    # Recommendations & Related
+                    to_json(video_data.get('recommended_videos')),
+                    to_json(video_data.get('next_recommended_videos')),
+                    to_json(video_data.get('related_videos')),
+                    
+                    # Live Stream Data
+                    video_data.get('is_live'),
+                    video_data.get('was_live'),
+                    video_data.get('live_start_time'),
+                    video_data.get('live_end_time'),
+                    video_data.get('concurrent_viewers'),
+                    
+                    # Age & Restrictions
+                    video_data.get('age_limit'),
+                    video_data.get('is_family_friendly'),
+                    video_data.get('content_rating'),
+                    
+                    # Monetization
+                    video_data.get('is_monetized'),
+                    video_data.get('has_ads'),
+                    
+                    # Performance Metrics
+                    video_data.get('view_count_24h'),
+                    video_data.get('like_ratio'),
+                    video_data.get('engagement_rate'),
+                    
+                    # Geographic Data
+                    video_data.get('country'),
+                    video_data.get('region'),
+                    
+                    # Video Analysis
+                    video_data.get('duration_category'),
+                    video_data.get('content_type'),
+                    
+                    # Discovery Agent Fields
+                    video_data.get('num_recommendations', 0),
+                    video_cloud_url,
+                    True  # is_animated (since this is the animation discovery agent)
                 ))
                 conn.commit()
                 
                 action = "Updated" if is_update else "Inserted"
-                logger.info(f"Video {action.lower()} in database", extra={
+                logger.info(f"Comprehensive video {action.lower()} in database", extra={
                     "video_id": video_id,
                     "action": action,
                     "title": video_data.get('title'),
-                    "has_cloud_url": bool(video_cloud_url)
+                    "table": "videos_full",
+                    "has_cloud_url": bool(video_cloud_url),
+                    "fields_captured": len([k for k, v in video_data.items() if v is not None])
                 })
                 
         except Exception as e:
-            logger.error("Failed to save video to database", extra={
-                "video_id": video_id,
-                "error": str(e)
-            })
+            logger.error(f"Failed to save comprehensive video to database: {str(e)}")
+            logger.error(f"Video ID: {video_id}, Table: videos_full")
             raise

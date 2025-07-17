@@ -4,8 +4,11 @@ import os
 import logging
 import json
 import threading
+import time
+import psutil
 from datetime import datetime
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from discovery_agent import DiscoveryAgent
 
 # Configure logging
@@ -17,6 +20,13 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Enable CORS for all origins (more permissive for development)
+CORS(app, 
+    origins="*",
+    methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+    supports_credentials=False
+)
 # Global variables to track discovery state
 discovery_stats = {
     "status": "idle",
@@ -42,7 +52,7 @@ def update_discovery_stats(agent, iteration=None):
     if iteration is not None:
         discovery_stats["current_iteration"] = iteration
 
-def run_discovery_background(seed_videos, max_iterations, save_videos, save_frames):
+def run_discovery_background(seed_videos, save_videos, save_frames):
     """Run discovery in background thread"""
     global discovery_stats
     
@@ -53,7 +63,7 @@ def run_discovery_background(seed_videos, max_iterations, save_videos, save_fram
         
         logger.info("Starting background discovery", extra={
             "seed_videos": seed_videos,
-            "max_iterations": max_iterations
+            "mode": "run_until_queue_empty"
         })
         
         agent = DiscoveryAgent(save_videos=save_videos, save_frames=save_frames)
@@ -61,23 +71,27 @@ def run_discovery_background(seed_videos, max_iterations, save_videos, save_fram
         # Manual iteration loop for better progress tracking
         agent.add_to_queue(seed_videos)
         
-        for i in range(max_iterations):
+        iteration = 0
+        while agent.queue:  # Continue until queue is empty
+            iteration += 1
             if not agent.queue:
                 logger.info("Queue empty, stopping discovery")
                 break
                 
-            logger.info(f"Background iteration {i+1}/{max_iterations}")
+            logger.info(f"Background iteration {iteration}")
             
             if not agent.process_video_batch():
+                logger.info("No videos processed, stopping discovery")
                 break
                 
-            update_discovery_stats(agent, i+1)
+            update_discovery_stats(agent, iteration)
         
         # Save results
         agent.save_results()
         
         discovery_stats["status"] = "completed"
         logger.info("Background discovery completed", extra={
+            "total_iterations": iteration,
             "total_animated": len(agent.animated_videos),
             "total_processed": len(agent.processed_videos)
         })
@@ -118,36 +132,39 @@ def start_discovery():
         
         # Configuration with defaults
         seed_videos = data.get('seed_videos', [
-            "hwiyUuYZLHE",
-            "RtU8nBnpFVE", 
-            "Bl1FOKpFY2Q"
+            'hwiyUuYZLHE', 'RtU8nBnpFVE', 'vffu6FG4YP4', '7LXaz9QIIBQ', 'oWlhMekUZRs',
+            'e89ee8RgBAY', 'rMpQbSq9dJ8', '0X_zwGXv5e4', '-p1P4fdhaF8', 'ZfB9Krqs1jQ',
+            'ha0SvMUpNRA', 'uNX0KjqmM8E', 'jGhf72_3dmw', '9ZFGeD9ApOs', '4HCFJ1klruE',
+            'X3hq9NsjXos', 'dBVjXegJ468', 'MpgLfaarl7g', 'tbzGr-GNpaw', 'WpFrE1_ym7M',
+            '0qbhZ-7S-9o', 'NV7eL9q7SZI', 'AJ59OqLO3Nk', 'kPOTBOoTYFE', 'bVpa7WRm3iY',
+            'mWwDdIpnhlM', 'trfB_0ycTp0', 'CcgE0RNxWJw', 'ZKS033Q5LPs', 'oYRSagA4K6g',
+            'n3OE2MdTZWc'
         ])
-        max_iterations = data.get('max_iterations', 10)
         save_videos = data.get('save_videos', True)
         save_frames = data.get('save_frames', False)
         
         logger.info("Discovery requested via API", extra={
             "seed_videos": seed_videos,
-            "max_iterations": max_iterations,
             "save_videos": save_videos,
-            "save_frames": save_frames
+            "save_frames": save_frames,
+            "mode": "run_until_queue_empty"
         })
         
         # Start discovery in background thread
         discovery_thread = threading.Thread(
             target=run_discovery_background,
-            args=(seed_videos, max_iterations, save_videos, save_frames)
+            args=(seed_videos, save_videos, save_frames)
         )
         discovery_thread.daemon = True
         discovery_thread.start()
         
         return jsonify({
-            "message": "Discovery started",
+            "message": "Discovery started - will run until queue is empty",
             "config": {
                 "seed_videos": seed_videos,
-                "max_iterations": max_iterations,
                 "save_videos": save_videos,
-                "save_frames": save_frames
+                "save_frames": save_frames,
+                "mode": "run_until_queue_empty"
             },
             "status_url": "/status"
         }), 202
@@ -162,15 +179,22 @@ def start_discovery_sync():
     try:
         data = request.get_json() or {}
         
-        seed_videos = data.get('seed_videos', ["hwiyUuYZLHE", "RtU8nBnpFVE"])
-        max_iterations = data.get('max_iterations', 5)  # Smaller default for sync
+        seed_videos = data.get('seed_videos', [
+            'hwiyUuYZLHE', 'RtU8nBnpFVE', 'vffu6FG4YP4', '7LXaz9QIIBQ', 'oWlhMekUZRs',
+            'e89ee8RgBAY', 'rMpQbSq9dJ8', '0X_zwGXv5e4', '-p1P4fdhaF8', 'ZfB9Krqs1jQ',
+            'ha0SvMUpNRA', 'uNX0KjqmM8E', 'jGhf72_3dmw', '9ZFGeD9ApOs', '4HCFJ1klruE',
+            'X3hq9NsjXos', 'dBVjXegJ468', 'MpgLfaarl7g', 'tbzGr-GNpaw', 'WpFrE1_ym7M',
+            '0qbhZ-7S-9o', 'NV7eL9q7SZI', 'AJ59OqLO3Nk', 'kPOTBOoTYFE', 'bVpa7WRm3iY',
+            'mWwDdIpnhlM', 'trfB_0ycTp0', 'CcgE0RNxWJw', 'ZKS033Q5LPs', 'oYRSagA4K6g',
+            'n3OE2MdTZWc'
+        ])
         save_videos = data.get('save_videos', False)   # Faster without video saving
         save_frames = data.get('save_frames', False)
         
-        logger.info("Synchronous discovery started")
+        logger.info("Synchronous discovery started - will run until queue is empty")
         
         agent = DiscoveryAgent(save_videos=save_videos, save_frames=save_frames)
-        animated_videos = agent.start_discovery(seed_videos, max_iterations)
+        animated_videos = agent.start_discovery(seed_videos)
         agent.save_results()
         
         return jsonify({
@@ -178,7 +202,8 @@ def start_discovery_sync():
             "results": {
                 "animated_videos_found": len(animated_videos),
                 "total_processed": len(agent.processed_videos),
-                "queue_remaining": len(agent.queue)
+                "queue_remaining": len(agent.queue),
+                "completion_reason": "queue_empty" if not agent.queue else "processing_failed"
             }
         }), 200
         
