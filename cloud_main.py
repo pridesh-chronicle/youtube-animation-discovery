@@ -8,7 +8,6 @@ import time
 import psutil
 from datetime import datetime
 from flask import Flask, request, jsonify, make_response
-from flask_cors import CORS
 from discovery_agent import DiscoveryAgent
 
 # Configure logging
@@ -20,31 +19,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Enable CORS for all origins (very permissive for Lovable/ngrok compatibility)
-CORS(app, 
-    origins="*",
-    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=[
-        "Content-Type", 
-        "Authorization", 
-        "X-Requested-With",
-        "Accept",
-        "Origin",
-        "Access-Control-Request-Method",
-        "Access-Control-Request-Headers",
-        "ngrok-skip-browser-warning",  # Specific for ngrok/Lovable
-        "User-Agent",
-        "Cache-Control",
-        "Pragma"
-    ],
-    expose_headers=[
-        "Access-Control-Allow-Origin",
-        "Access-Control-Allow-Headers",
-        "Access-Control-Allow-Methods"
-    ],
-    supports_credentials=False,
-    max_age=86400  # Cache preflight for 24 hours
-)
+# CORS is handled manually below to avoid duplicate headers
 # Manual CORS preflight handler for maximum compatibility (especially Lovable/ngrok)
 @app.before_request
 def handle_preflight():
