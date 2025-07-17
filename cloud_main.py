@@ -20,27 +20,22 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # CORS is handled manually below to avoid duplicate headers
-# Manual CORS preflight handler for maximum compatibility (especially Lovable/ngrok)
-@app.before_request
-def handle_preflight():
-    if request.method == "OPTIONS":
-        response = make_response()
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add('Access-Control-Allow-Headers', 
-                           "Content-Type,Authorization,X-Requested-With,Accept,Origin,Access-Control-Request-Method,Access-Control-Request-Headers,ngrok-skip-browser-warning,User-Agent,Cache-Control,Pragma")
-        response.headers.add('Access-Control-Allow-Methods', 
-                           "GET,PUT,POST,DELETE,OPTIONS,PATCH")
-        response.headers.add('Access-Control-Max-Age', '86400')
-        return response
-
+# Manual CORS handler for maximum compatibility (especially Lovable/ngrok)
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 
-                        "Content-Type,Authorization,X-Requested-With,Accept,Origin,Access-Control-Request-Method,Access-Control-Request-Headers,ngrok-skip-browser-warning,User-Agent,Cache-Control,Pragma")
-    response.headers.add('Access-Control-Allow-Methods', 
-                        "GET,PUT,POST,DELETE,OPTIONS,PATCH")
+    # Always add CORS headers to all responses (including OPTIONS)
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = "Content-Type,Authorization,X-Requested-With,Accept,Origin,Access-Control-Request-Method,Access-Control-Request-Headers,ngrok-skip-browser-warning,User-Agent,Cache-Control,Pragma"
+    response.headers['Access-Control-Allow-Methods'] = "GET,PUT,POST,DELETE,OPTIONS,PATCH"
+    response.headers['Access-Control-Max-Age'] = '86400'
     return response
+
+# Handle OPTIONS preflight requests
+@app.route('/<path:path>', methods=['OPTIONS'])
+@app.route('/', methods=['OPTIONS'])
+def handle_options(path=None):
+    """Handle preflight OPTIONS requests for any route"""
+    return '', 200
 
 # Global variables to track discovery state
 discovery_stats = {
