@@ -2,7 +2,6 @@ FROM python:3.11-slim
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    ffmpeg \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -18,8 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create directories for temporary files
-RUN mkdir -p /tmp/videos /tmp/frames
+# No temporary directories needed for Gemini-only analysis
 
 # Set environment variables
 ENV PORT=8080

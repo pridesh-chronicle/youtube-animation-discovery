@@ -11,11 +11,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def main():
-    # Example seed videos (you can change these)
+    # Extended seed videos from user's comprehensive list
     seed_videos = [
-        "hwiyUuYZLHE",  # Your example video
-        "RtU8nBnpFVE",  # Your example video
-        "Bl1FOKpFY2Q"   # Your example video
+        'hwiyUuYZLHE', 'RtU8nBnpFVE', 'vffu6FG4YP4', '7LXaz9QIIBQ', 'oWlhMekUZRs',
+        'e89ee8RgBAY', 'rMpQbSq9dJ8', '0X_zwGXv5e4', '-p1P4fdhaF8', 'ZfB9Krqs1jQ',
+        'ha0SvMUpNRA', 'uNX0KjqmM8E', 'jGhf72_3dmw', '9ZFGeD9ApOs', '4HCFJ1klruE',
+        'X3hq9NsjXos', 'dBVjXegJ468', 'MpgLfaarl7g', 'tbzGr-GNpaw', 'WpFrE1_ym7M',
+        '0qbhZ-7S-9o', 'NV7eL9q7SZI', 'AJ59OqLO3Nk', 'kPOTBOoTYFE', 'bVpa7WRm3iY',
+        'mWwDdIpnhlM', 'trfB_0ycTp0', 'CcgE0RNxWJw', 'ZKS033Q5LPs', 'oYRSagA4K6g',
+        'n3OE2MdTZWc'
     ]
     
     # Configuration flags for saving videos and frames
@@ -29,8 +33,9 @@ def main():
         # Create and run discovery agent
         agent = DiscoveryAgent(save_videos=save_videos, save_frames=save_frames)
         
-        # Start discovery process
-        animated_videos = agent.start_discovery(seed_videos, max_iterations=1000)
+        # Start discovery process - runs until queue is empty
+        logger.info("🔄 Running discovery until queue is empty...")
+        animated_videos = agent.start_discovery(seed_videos)
         
         # Save results
         agent.save_results()

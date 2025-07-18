@@ -7,6 +7,7 @@ from api_client import BrightDataClient, BrightDataTimeoutError, BrightDataAPIEr
 from animation_detector import is_animated
 from cloud_database import CloudDatabase
 from cloud_storage import CloudStorage
+from discovery_queue import DiscoveryQueue
 
 # Configure logging
 logging.basicConfig(
@@ -24,7 +25,6 @@ class DiscoveryAgent:
         self.client = BrightDataClient()
         self.processed_videos = set()  # Global set to track processed videos
         self.animated_videos = []      # Store animated videos found
-        self.queue = []               # Queue of videos to process
         
         self.save_videos = save_videos
         self.save_frames = save_frames
@@ -32,10 +32,13 @@ class DiscoveryAgent:
         self.cloud_db = CloudDatabase()
         self.cloud_storage = CloudStorage()
         
+        # Initialize cloud-based queue
+        self.queue = DiscoveryQueue(self.cloud_db.get_connection)
+        
         # Initialize database
         self.setup_database()
         
-        logger.info("Discovery agent initialized", extra={
+        logger.info("Discovery agent initialized with cloud queue", extra={
             "save_videos": save_videos,
             "save_frames": save_frames
         })
@@ -59,46 +62,46 @@ class DiscoveryAgent:
             })
             return False
     
-    def add_to_queue(self, video_ids):
-        """Add video IDs to queue if not already processed"""
-        added_count = 0
-        duplicate_count = 0
-        
+    def add_to_queue(self, video_ids, source_video_id=None):
+        """Add video IDs to cloud queue if not already processed"""
+        if not video_ids:
+            return
+            
+        # Filter out already processed videos
+        filtered_video_ids = []
         for video_id in video_ids:
-            # Check multiple conditions before adding
             if video_id in self.processed_videos:
                 logger.debug("Video already processed in session", extra={"video_id": video_id})
                 continue
                 
-            if video_id in self.queue:
-                logger.debug("Video already in queue", extra={"video_id": video_id})
-                continue
-                
             # Check database for duplicates
             if self.is_already_processed(video_id):
-                duplicate_count += 1
                 self.processed_videos.add(video_id)  # Mark as processed to avoid future checks
                 continue
-            
-            self.queue.append(video_id)
-            added_count += 1
-            logger.debug("Added to queue", extra={"video_id": video_id})
+                
+            filtered_video_ids.append(video_id)
         
-        logger.info("Queue update completed", extra={
-            "added_to_queue": added_count,
-            "duplicates_skipped": duplicate_count,
-            "current_queue_size": len(self.queue)
-        })
+        if filtered_video_ids:
+            # Add to cloud queue
+            added_count = self.queue.add_videos(filtered_video_ids, source_video_id)
+            
+            logger.info("Videos added to cloud queue", extra={
+                "added_to_queue": added_count,
+                "total_requested": len(video_ids),
+                "filtered_count": len(filtered_video_ids),
+                "source_video": source_video_id
+            })
+        else:
+            logger.debug("No new videos to add to queue")
     
     def process_video_batch(self, batch_size=10, max_retries=2):
-        """Process a batch of videos from the queue with retry logic"""
-        if not self.queue:
+        """Process a batch of videos from the cloud queue with retry logic"""
+        # Get batch from cloud queue
+        batch = self.queue.get_next_batch(batch_size)
+        
+        if not batch:
             logger.debug("No videos in queue to process")
             return False
-        
-        # Get batch from queue
-        batch = self.queue[:batch_size]
-        self.queue = self.queue[batch_size:]
         
         # Convert to URLs
         video_urls = [f"https://www.youtube.com/watch?v={video_id}" for video_id in batch]
@@ -147,9 +150,8 @@ class DiscoveryAgent:
                         "max_retries": max_retries,
                         "error": str(e)
                     })
-                    # Mark these videos as processed to avoid infinite retry loops
-                    for video_id in batch:
-                        self.processed_videos.add(video_id)
+                    # Mark these videos as failed in cloud queue
+                    self.queue.mark_failed(batch, f"Timeout after {max_retries} retries: {str(e)}")
                     return True  # Continue processing other batches
                     
             except Exception as e:
@@ -170,9 +172,8 @@ class DiscoveryAgent:
                         "max_retries": max_retries,
                         "error": str(e)
                     })
-                    # Mark these videos as processed to avoid infinite retry loops
-                    for video_id in batch:
-                        self.processed_videos.add(video_id)
+                    # Mark these videos as failed in cloud queue
+                    self.queue.mark_failed(batch, f"API error after {max_retries} retries: {str(e)}")
                     return True  # Continue processing other batches
         
         # If we get here without video_data_list, something went wrong
@@ -181,9 +182,8 @@ class DiscoveryAgent:
                 "batch_size": len(batch),
                 "video_ids": batch
             })
-            # Mark as processed and continue
-            for video_id in batch:
-                self.processed_videos.add(video_id)
+            # Mark as failed in cloud queue and continue
+            self.queue.mark_failed(batch, "Failed to get video data after all retries")
             return True
         
         batch_stats = {
@@ -192,6 +192,8 @@ class DiscoveryAgent:
             "processing_errors": 0,
             "total_recommendations": 0
         }
+        
+        processed_video_ids = []  # Track successfully processed videos for cloud queue
         
         for video_data in video_data_list:
             video_id = video_data.get('video_id')
@@ -205,7 +207,7 @@ class DiscoveryAgent:
                 "channel": video_data.get('youtuber')
             })
             
-            # Mark as processed
+            # Mark as processed in memory
             self.processed_videos.add(video_id)
             
             try:
@@ -248,13 +250,16 @@ class DiscoveryAgent:
                         "sample_recommendations": recommendations[:3] if recommendations else []
                     })
                     
-                    self.add_to_queue(recommendations)
+                    self.add_to_queue(recommendations, source_video_id=video_id)
                 else:
                     logger.info("Non-animated video", extra={
                         "video_id": video_id,
                         "title": video_title
                     })
                     batch_stats["non_animated"] += 1
+                
+                # Mark video as successfully processed for cloud queue
+                processed_video_ids.append(video_id)
                     
             except Exception as e:
                 logger.error("Error processing video", extra={
@@ -263,13 +268,21 @@ class DiscoveryAgent:
                     "error": str(e)
                 })
                 batch_stats["processing_errors"] += 1
+                # Don't add to processed_video_ids if there was an error
+        
+        # Mark successfully processed videos as completed in cloud queue
+        if processed_video_ids:
+            self.queue.mark_completed(processed_video_ids)
+        
+        # Get queue stats for logging
+        queue_stats = self.queue.get_stats()
         
         # Log batch summary
         logger.info("Batch processing completed", extra={
             "batch_stats": batch_stats,
             "total_animated_found": len(self.animated_videos),
             "total_processed": len(self.processed_videos),
-            "queue_size": len(self.queue)
+            "cloud_queue_stats": queue_stats
         })
         
         return True
@@ -287,13 +300,19 @@ class DiscoveryAgent:
         
         # Process videos until queue is empty
         iteration = 0
-        while self.queue:  # Continue while queue has videos
+        while True:  # Continue until no more videos to process
+            # Check if there are videos in the queue
+            queue_stats = self.queue.get_stats()
+            if queue_stats.get('pending', 0) == 0:
+                logger.info("No pending videos in queue, stopping discovery")
+                break
+                
             iteration += 1
             iteration_start_time = time.time()
             
             logger.info("Starting iteration", extra={
                 "iteration": iteration,
-                "queue_size": len(self.queue),
+                "queue_stats": queue_stats,
                 "total_processed": len(self.processed_videos),
                 "animated_found": len(self.animated_videos)
             })
@@ -307,23 +326,29 @@ class DiscoveryAgent:
                 break
             
             iteration_time = time.time() - iteration_start_time
+            
+            # Get updated queue stats
+            current_queue_stats = self.queue.get_stats()
+            
             logger.info("Iteration completed", extra={
                 "iteration": iteration,
                 "duration_seconds": round(iteration_time, 2),
                 "cumulative_animated": len(self.animated_videos),
-                "queue_remaining": len(self.queue)
+                "queue_stats": current_queue_stats
             })
             
             # Small delay to be respectful to APIs
             time.sleep(1)
         
-        # Final summary
+        # Final summary with queue cleanup
+        final_queue_stats = self.queue.get_stats()
+        
         logger.info("Discovery process completed", extra={
             "total_iterations": iteration,
             "total_animated_videos": len(self.animated_videos),
             "total_videos_processed": len(self.processed_videos),
-            "final_queue_size": len(self.queue),
-            "completion_reason": "queue_empty" if not self.queue else "processing_failed"
+            "final_queue_stats": final_queue_stats,
+            "completion_reason": "queue_empty"
         })
         
         return self.animated_videos

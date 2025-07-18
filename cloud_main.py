@@ -52,10 +52,15 @@ discovery_thread = None
 def update_discovery_stats(agent, iteration=None):
     """Update global discovery statistics"""
     global discovery_stats
+    
+    # Get cloud queue stats
+    queue_stats = agent.queue.get_stats()
+    
     discovery_stats.update({
         "total_animated": len(agent.animated_videos),
         "total_processed": len(agent.processed_videos),
-        "queue_size": len(agent.queue),
+        "queue_size": queue_stats.get('pending', 0),
+        "queue_stats": queue_stats,
         "last_update": datetime.now().isoformat()
     })
     if iteration is not None:
@@ -120,18 +125,6 @@ def health_check():
         "cors_enabled": True
     }), 200
 
-@app.route('/cors-test', methods=['GET', 'POST', 'OPTIONS'])
-def cors_test():
-    """CORS test endpoint specifically for Lovable integration"""
-    return jsonify({
-        "message": "CORS is working!",
-        "method": request.method,
-        "headers_received": dict(request.headers),
-        "origin": request.headers.get('Origin', 'No origin header'),
-        "user_agent": request.headers.get('User-Agent', 'No user agent'),
-        "ngrok_header": request.headers.get('ngrok-skip-browser-warning', 'Not present'),
-        "timestamp": datetime.now().isoformat()
-    }), 200
 
 @app.route('/metrics', methods=['GET'])
 def get_metrics():
@@ -368,6 +361,106 @@ def index():
             }
         }
     }), 200
+
+@app.route('/queue/stats', methods=['GET'])
+def get_queue_stats():
+    """Get comprehensive queue statistics"""
+    try:
+        from cloud_database import CloudDatabase
+        from discovery_queue import DiscoveryQueue
+        
+        db = CloudDatabase()
+        queue = DiscoveryQueue(db.get_connection)
+        
+        stats = queue.get_stats()
+        
+        return jsonify({
+            "timestamp": datetime.now().isoformat(),
+            "queue_stats": stats,
+            "discovery_agent_status": discovery_stats["status"]
+        }), 200
+        
+    except Exception as e:
+        logger.error("Failed to get queue stats", extra={"error": str(e)})
+        return jsonify({
+            "error": "Failed to retrieve queue stats",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+@app.route('/queue/add', methods=['POST'])
+def add_to_queue_endpoint():
+    """Add videos to the discovery queue"""
+    try:
+        data = request.get_json() or {}
+        video_ids = data.get('video_ids', [])
+        priority = data.get('priority', 0)
+        source_video_id = data.get('source_video_id')
+        
+        if not video_ids:
+            return jsonify({
+                "error": "No video_ids provided",
+                "timestamp": datetime.now().isoformat()
+            }), 400
+        
+        from cloud_database import CloudDatabase
+        from discovery_queue import DiscoveryQueue
+        
+        db = CloudDatabase()
+        queue = DiscoveryQueue(db.get_connection)
+        
+        added_count = queue.add_videos(video_ids, source_video_id)
+        
+        return jsonify({
+            "message": f"Added {added_count} videos to queue",
+            "added_count": added_count,
+            "total_requested": len(video_ids),
+            "duplicates_skipped": len(video_ids) - added_count,
+            "timestamp": datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error("Failed to add videos to queue", extra={"error": str(e)})
+        return jsonify({
+            "error": "Failed to add videos to queue",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+@app.route('/queue/cleanup', methods=['POST'])
+def cleanup_queue():
+    """Clean up old queue entries"""
+    try:
+        data = request.get_json() or {}
+        days_old = data.get('days_old', 7)
+        
+        from cloud_database import CloudDatabase
+        from discovery_queue import DiscoveryQueue
+        
+        db = CloudDatabase()
+        queue = DiscoveryQueue(db.get_connection)
+        
+        # Clean up old entries
+        deleted_count = queue.cleanup_old_entries(days_old)
+        
+        # Reset stuck processing videos
+        reset_count = queue.reset_stuck_processing()
+        
+        return jsonify({
+            "message": "Queue cleanup completed",
+            "deleted_old_entries": deleted_count,
+            "reset_stuck_processing": reset_count,
+            "days_old_threshold": days_old,
+            "timestamp": datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error("Failed to cleanup queue", extra={"error": str(e)})
+        return jsonify({
+            "error": "Failed to cleanup queue",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
 
 def main():
     """Main function for local testing"""
