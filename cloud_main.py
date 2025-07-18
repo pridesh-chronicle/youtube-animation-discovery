@@ -86,11 +86,14 @@ def run_discovery_background(seed_videos, save_videos, save_frames):
         agent.add_to_queue(seed_videos)
         
         iteration = 0
-        while agent.queue:  # Continue until queue is empty
-            iteration += 1
-            if not agent.queue:
+        while True:  # Continue until queue is empty
+            # Check if there are videos in the queue
+            queue_stats = agent.queue.get_stats()
+            if queue_stats.get('pending', 0) == 0:
                 logger.info("Queue empty, stopping discovery")
                 break
+                
+            iteration += 1
                 
             logger.info(f"Background iteration {iteration}")
             
@@ -128,7 +131,7 @@ def health_check():
 
 @app.route('/metrics', methods=['GET'])
 def get_metrics():
-    """Get database metrics - total videos and creators collected"""
+    """Get comprehensive analytics and metrics"""
     try:
         from cloud_database import CloudDatabase
         db = CloudDatabase()
@@ -136,76 +139,251 @@ def get_metrics():
         with db.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Total videos count
-            cursor.execute("SELECT COUNT(*) FROM videos_full")
+            # Basic database metrics (animated videos only)
+            cursor.execute("SELECT COUNT(*) FROM videos_full WHERE is_animated = true")
             total_videos = cursor.fetchone()[0]
             
-            # Total unique creators (using youtuber field)
-            cursor.execute("SELECT COUNT(DISTINCT youtuber) FROM videos_full WHERE youtuber IS NOT NULL AND youtuber != ''")
+            cursor.execute("SELECT COUNT(DISTINCT youtuber) FROM videos_full WHERE youtuber IS NOT NULL AND youtuber != '' AND is_animated = true")
             total_creators = cursor.fetchone()[0]
             
-            # Total unique channels (using channel_id)
-            cursor.execute("SELECT COUNT(DISTINCT channel_id) FROM videos_full WHERE channel_id IS NOT NULL AND channel_id != ''")
-            total_channels = cursor.fetchone()[0]
-            
-            # Total views across all videos
-            cursor.execute("SELECT SUM(views) FROM videos_full WHERE views IS NOT NULL")
+            cursor.execute("SELECT SUM(views) FROM videos_full WHERE views IS NOT NULL AND is_animated = true")
             total_views_result = cursor.fetchone()[0]
             total_views = int(total_views_result) if total_views_result else 0
             
-            # Most recent discovery
-            cursor.execute("SELECT MAX(discovered_at) FROM videos_full")
-            latest_discovery = cursor.fetchone()[0]
-            
-            # Top 5 creators by video count
+            # 1. Last 5 videos added to the database
             cursor.execute("""
-                SELECT youtuber, COUNT(*) as video_count, SUM(views) as total_views
+                SELECT video_id, title, youtuber, views, discovered_at, url
                 FROM videos_full 
-                WHERE youtuber IS NOT NULL AND youtuber != ''
-                GROUP BY youtuber 
-                ORDER BY video_count DESC 
+                WHERE is_animated = true
+                ORDER BY discovered_at DESC 
                 LIMIT 5
             """)
-            top_creators = []
+            recent_videos = []
             for row in cursor.fetchall():
-                top_creators.append({
-                    "creator": row[0],
-                    "video_count": row[1],
-                    "total_views": int(row[2]) if row[2] else 0
+                recent_videos.append({
+                    "video_id": row[0],
+                    "title": row[1],
+                    "creator": row[2],
+                    "views": int(row[3]) if row[3] else 0,
+                    "discovered_at": row[4].isoformat() if row[4] else None,
+                    "url": row[5]
                 })
             
-            # Discovery stats by date (last 7 days)
+            # 2. Top creators by different metrics
+            # Top creators by view count
             cursor.execute("""
-                SELECT DATE(discovered_at) as discovery_date, COUNT(*) as videos_discovered
+                SELECT youtuber, SUM(views) as total_views, COUNT(*) as video_count, AVG(subscribers) as avg_subscribers
                 FROM videos_full 
-                WHERE discovered_at >= CURRENT_DATE - INTERVAL '7 days'
-                GROUP BY DATE(discovered_at)
-                ORDER BY discovery_date DESC
+                WHERE youtuber IS NOT NULL AND youtuber != '' AND views IS NOT NULL
+                AND is_animated = true
+                GROUP BY youtuber 
+                ORDER BY total_views DESC 
+                LIMIT 5
             """)
-            recent_discoveries = []
+            top_creators_by_views = []
             for row in cursor.fetchall():
-                recent_discoveries.append({
-                    "date": row[0].isoformat() if row[0] else None,
-                    "videos_discovered": row[1]
+                top_creators_by_views.append({
+                    "creator": row[0],
+                    "total_views": int(row[1]) if row[1] else 0,
+                    "video_count": row[2],
+                    "avg_subscribers": int(row[3]) if row[3] else 0
+                })
+            
+            # Top creators by subscriber count
+            cursor.execute("""
+                SELECT youtuber, MAX(subscribers) as max_subscribers, SUM(views) as total_views, COUNT(*) as video_count
+                FROM videos_full 
+                WHERE youtuber IS NOT NULL AND youtuber != '' AND subscribers IS NOT NULL
+                AND is_animated = true
+                GROUP BY youtuber 
+                ORDER BY max_subscribers DESC 
+                LIMIT 5
+            """)
+            top_creators_by_subscribers = []
+            for row in cursor.fetchall():
+                top_creators_by_subscribers.append({
+                    "creator": row[0],
+                    "subscribers": int(row[1]) if row[1] else 0,
+                    "total_views": int(row[2]) if row[2] else 0,
+                    "video_count": row[3]
+                })
+            
+            # Top creators by engagement rate
+            cursor.execute("""
+                SELECT youtuber, 
+                       SUM(views) as total_views,
+                       SUM(likes) as total_likes,
+                       SUM(num_comments) as total_comments,
+                       MAX(subscribers) as max_subscribers,
+                       COUNT(*) as video_count,
+                       CASE 
+                           WHEN SUM(views) > 0 THEN 
+                               ((SUM(COALESCE(likes, 0)) + SUM(COALESCE(num_comments, 0)) + MAX(COALESCE(subscribers, 0))) * 100.0 / SUM(views))
+                           ELSE 0 
+                       END as engagement_rate
+                FROM videos_full 
+                WHERE youtuber IS NOT NULL AND youtuber != '' AND views IS NOT NULL AND views > 0
+                AND is_animated = true
+                GROUP BY youtuber 
+                ORDER BY engagement_rate DESC 
+                LIMIT 5
+            """)
+            top_creators_by_engagement = []
+            for row in cursor.fetchall():
+                top_creators_by_engagement.append({
+                    "creator": row[0],
+                    "total_views": int(row[1]) if row[1] else 0,
+                    "total_likes": int(row[2]) if row[2] else 0,
+                    "total_comments": int(row[3]) if row[3] else 0,
+                    "subscribers": int(row[4]) if row[4] else 0,
+                    "video_count": row[5],
+                    "engagement_rate": round(float(row[6]), 2) if row[6] else 0
+                })
+            
+            # 3. Top videos by date ranges
+            date_ranges = {
+                "1d": "1 day",
+                "7d": "7 days", 
+                "1m": "1 month",
+                "1y": "1 year"
+            }
+            
+            top_videos_by_period = {}
+            
+            for period, interval in date_ranges.items():
+                cursor.execute(f"""
+                    SELECT video_id, title, youtuber, views, date_posted, url
+                    FROM videos_full 
+                    WHERE date_posted >= CURRENT_DATE - INTERVAL '{interval}'
+                    AND views IS NOT NULL
+                    AND is_animated = true
+                    ORDER BY views DESC 
+                    LIMIT 5
+                """)
+                
+                period_videos = []
+                for row in cursor.fetchall():
+                    period_videos.append({
+                        "video_id": row[0],
+                        "title": row[1],
+                        "creator": row[2],
+                        "views": int(row[3]) if row[3] else 0,
+                        "date_posted": row[4].isoformat() if row[4] else None,
+                        "url": row[5]
+                    })
+                top_videos_by_period[period] = period_videos
+            
+            # All time top videos
+            cursor.execute("""
+                SELECT video_id, title, youtuber, views, date_posted, url
+                FROM videos_full 
+                WHERE views IS NOT NULL
+                AND is_animated = true
+                ORDER BY views DESC 
+                LIMIT 5
+            """)
+            all_time_top_videos = []
+            for row in cursor.fetchall():
+                all_time_top_videos.append({
+                    "video_id": row[0],
+                    "title": row[1],
+                    "creator": row[2],
+                    "views": int(row[3]) if row[3] else 0,
+                    "date_posted": row[4].isoformat() if row[4] else None,
+                    "url": row[5]
+                })
+            top_videos_by_period["all_time"] = all_time_top_videos
+            
+            # 4. Up and coming videos (posted <30 days, ordered by views/day)
+            cursor.execute("""
+                SELECT video_id, title, youtuber, views, date_posted, url,
+                       CASE 
+                           WHEN date_posted IS NOT NULL THEN 
+                               views::float / GREATEST(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - date_posted))::float / 86400, 1)
+                           ELSE 0 
+                       END as views_per_day
+                FROM videos_full 
+                WHERE date_posted >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+                AND views IS NOT NULL AND views > 0
+                AND is_animated = true
+                ORDER BY views_per_day DESC 
+                LIMIT 5
+            """)
+            up_and_coming_videos = []
+            for row in cursor.fetchall():
+                up_and_coming_videos.append({
+                    "video_id": row[0],
+                    "title": row[1],
+                    "creator": row[2],
+                    "views": int(row[3]) if row[3] else 0,
+                    "date_posted": row[4].isoformat() if row[4] else None,
+                    "url": row[5],
+                    "views_per_day": round(float(row[6]), 2) if row[6] else 0
+                })
+            
+            # 5. Up and coming creators (<50k subs, ordered by velocity)
+            cursor.execute("""
+                WITH creator_metrics AS (
+                    SELECT youtuber,
+                           MAX(subscribers) as max_subscribers,
+                           SUM(views) as total_views,
+                           COUNT(*) as video_count,
+                           MIN(date_posted) as first_posted,
+                           MAX(date_posted) as latest_posted
+                    FROM videos_full 
+                    WHERE youtuber IS NOT NULL AND youtuber != '' 
+                    AND subscribers IS NOT NULL AND subscribers < 50000
+                    AND date_posted IS NOT NULL
+                    AND is_animated = true
+                    GROUP BY youtuber
+                )
+                SELECT youtuber, max_subscribers, total_views, video_count, first_posted, latest_posted,
+                       CASE 
+                           WHEN first_posted IS NOT NULL THEN 
+                               total_views::float / GREATEST(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - first_posted))::float / 86400, 1)
+                           ELSE 0 
+                       END as velocity
+                FROM creator_metrics
+                WHERE first_posted IS NOT NULL
+                ORDER BY velocity DESC 
+                LIMIT 5
+            """)
+            up_and_coming_creators = []
+            for row in cursor.fetchall():
+                up_and_coming_creators.append({
+                    "creator": row[0],
+                    "subscribers": int(row[1]) if row[1] else 0,
+                    "total_views": int(row[2]) if row[2] else 0,
+                    "video_count": row[3],
+                    "first_posted": row[4].isoformat() if row[4] else None,
+                    "latest_posted": row[5].isoformat() if row[5] else None,
+                    "velocity": round(float(row[6]), 2) if row[6] else 0
                 })
         
         return jsonify({
             "timestamp": datetime.now().isoformat(),
-            "database_metrics": {
+            "database_overview": {
                 "total_videos": total_videos,
                 "total_creators": total_creators,
-                "total_channels": total_channels,
-                "total_views": total_views,
-                "latest_discovery": latest_discovery.isoformat() if latest_discovery else None
+                "total_views": total_views
             },
-            "top_creators": top_creators,
-            "recent_discoveries": recent_discoveries,
+            "recent_videos": recent_videos,
+            "top_creators": {
+                "by_views": top_creators_by_views,
+                "by_subscribers": top_creators_by_subscribers,
+                "by_engagement": top_creators_by_engagement
+            },
+            "top_videos": top_videos_by_period,
+            "up_and_coming": {
+                "videos": up_and_coming_videos,
+                "creators": up_and_coming_creators
+            },
             "discovery_agent_status": discovery_stats["status"],
             "current_queue_size": discovery_stats.get("queue_size", 0)
         }), 200
         
     except Exception as e:
-        logger.error("Failed to get database metrics", extra={"error": str(e)})
+        logger.error("Failed to get comprehensive metrics", extra={"error": str(e)})
         return jsonify({
             "error": "Failed to retrieve metrics",
             "message": str(e),
@@ -280,37 +458,38 @@ def start_discovery_sync():
     """Start discovery process synchronously (blocks until complete)"""
     try:
         data = request.get_json() or {}
-        
-        seed_videos = data.get('seed_videos', [
-            'hwiyUuYZLHE', 'RtU8nBnpFVE', 'vffu6FG4YP4', '7LXaz9QIIBQ', 'oWlhMekUZRs',
-            'e89ee8RgBAY', 'rMpQbSq9dJ8', '0X_zwGXv5e4', '-p1P4fdhaF8', 'ZfB9Krqs1jQ',
-            'ha0SvMUpNRA', 'uNX0KjqmM8E', 'jGhf72_3dmw', '9ZFGeD9ApOs', '4HCFJ1klruE',
-            'X3hq9NsjXos', 'dBVjXegJ468', 'MpgLfaarl7g', 'tbzGr-GNpaw', 'WpFrE1_ym7M',
-            '0qbhZ-7S-9o', 'NV7eL9q7SZI', 'AJ59OqLO3Nk', 'kPOTBOoTYFE', 'bVpa7WRm3iY',
-            'mWwDdIpnhlM', 'trfB_0ycTp0', 'CcgE0RNxWJw', 'ZKS033Q5LPs', 'oYRSagA4K6g',
-            'n3OE2MdTZWc'
-        ])
-        save_videos = data.get('save_videos', False)   # Faster without video saving
+        seed_videos = data.get('seed_videos', ['hwiyUuYZLHE'])
+        save_videos = data.get('save_videos', True)
         save_frames = data.get('save_frames', False)
         
-        logger.info("Synchronous discovery started - will run until queue is empty")
+        logger.info("Sync discovery requested", extra={
+            "seed_videos": seed_videos,
+            "save_videos": save_videos,
+            "save_frames": save_frames
+        })
         
+        # Create and run agent directly (synchronous)
         agent = DiscoveryAgent(save_videos=save_videos, save_frames=save_frames)
-        animated_videos = agent.start_discovery(seed_videos)
-        agent.save_results()
+        
+        # Add seed videos and run discovery
+        agent.add_to_queue(seed_videos)
+        results = agent.run_discovery()
+        
+        # Get final stats
+        queue_stats = agent.queue.get_stats()
         
         return jsonify({
-            "status": "completed",
+            "message": "Discovery completed",
             "results": {
-                "animated_videos_found": len(animated_videos),
+                "total_animated": len(agent.animated_videos),
                 "total_processed": len(agent.processed_videos),
-                "queue_remaining": len(agent.queue),
-                "completion_reason": "queue_empty" if not agent.queue else "processing_failed"
+                "animated_videos": [video.to_dict() for video in agent.animated_videos[:10]],  # First 10
+                "queue_stats": queue_stats
             }
         }), 200
         
     except Exception as e:
-        logger.error("Synchronous discovery failed", extra={"error": str(e)})
+        logger.error("Sync discovery failed", extra={"error": str(e)})
         return jsonify({"error": str(e)}), 500
 
 @app.route('/logs', methods=['GET'])
@@ -441,7 +620,7 @@ def cleanup_queue():
         queue = DiscoveryQueue(db.get_connection)
         
         # Clean up old entries
-        deleted_count = queue.cleanup_old_entries(days_old)
+        deleted_count = queue.cleanup_old_completed(days_old)
         
         # Reset stuck processing videos
         reset_count = queue.reset_stuck_processing()
