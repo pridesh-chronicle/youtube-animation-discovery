@@ -152,7 +152,7 @@ def get_metrics():
             
             # 1. Last 5 videos added to the database
             cursor.execute("""
-                SELECT video_id, title, youtuber, views, discovered_at, url
+                SELECT video_id, title, youtuber, views, discovered_at, url, avatar_img_channel, preview_image
                 FROM videos_full 
                 WHERE is_animated = true
                 ORDER BY discovered_at DESC 
@@ -166,7 +166,9 @@ def get_metrics():
                     "creator": row[2],
                     "views": int(row[3]) if row[3] else 0,
                     "discovered_at": row[4].isoformat() if row[4] else None,
-                    "url": row[5]
+                    "url": row[5],
+                    "avatar_img_channel": row[6],
+                    "preview_image": row[7]
                 })
             
             # 2. Top creators by different metrics
@@ -252,7 +254,7 @@ def get_metrics():
             
             for period, interval in date_ranges.items():
                 cursor.execute(f"""
-                    SELECT video_id, title, youtuber, views, date_posted, url
+                    SELECT video_id, title, youtuber, views, date_posted, url, avatar_img_channel, preview_image
                     FROM videos_full 
                     WHERE date_posted >= CURRENT_DATE - INTERVAL '{interval}'
                     AND views IS NOT NULL
@@ -269,13 +271,15 @@ def get_metrics():
                         "creator": row[2],
                         "views": int(row[3]) if row[3] else 0,
                         "date_posted": row[4].isoformat() if row[4] else None,
-                        "url": row[5]
+                        "url": row[5],
+                        "avatar_img_channel": row[6],
+                        "preview_image": row[7]
                     })
                 top_videos_by_period[period] = period_videos
             
             # All time top videos
             cursor.execute("""
-                SELECT video_id, title, youtuber, views, date_posted, url
+                SELECT video_id, title, youtuber, views, date_posted, url, avatar_img_channel, preview_image
                 FROM videos_full 
                 WHERE views IS NOT NULL
                 AND is_animated = true
@@ -290,13 +294,15 @@ def get_metrics():
                     "creator": row[2],
                     "views": int(row[3]) if row[3] else 0,
                     "date_posted": row[4].isoformat() if row[4] else None,
-                    "url": row[5]
+                    "url": row[5],
+                    "avatar_img_channel": row[6],
+                    "preview_image": row[7]
                 })
             top_videos_by_period["all_time"] = all_time_top_videos
             
             # 4. Up and coming videos (posted <30 days, ordered by views/day)
             cursor.execute("""
-                SELECT video_id, title, youtuber, views, date_posted, url,
+                SELECT video_id, title, youtuber, views, date_posted, url, avatar_img_channel, preview_image,
                        CASE 
                            WHEN date_posted IS NOT NULL THEN 
                                views::float / GREATEST(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - date_posted))::float / 86400, 1)
@@ -318,7 +324,9 @@ def get_metrics():
                     "views": int(row[3]) if row[3] else 0,
                     "date_posted": row[4].isoformat() if row[4] else None,
                     "url": row[5],
-                    "views_per_day": round(float(row[6]), 2) if row[6] else 0
+                    "avatar_img_channel": row[6],
+                    "preview_image": row[7],
+                    "views_per_day": round(float(row[8]), 2) if row[8] else 0
                 })
             
             # 5. Up and coming creators (<50k subs, ordered by velocity)
