@@ -174,7 +174,7 @@ def get_metrics():
             # 2. Top creators by different metrics
             # Top creators by view count
             cursor.execute("""
-                SELECT youtuber, SUM(views) as total_views, COUNT(*) as video_count, AVG(subscribers) as avg_subscribers
+                SELECT youtuber, SUM(views) as total_views, COUNT(*) as video_count, AVG(subscribers) as avg_subscribers, MAX(avatar_img_channel) as avatar_img_channel
                 FROM videos_full 
                 WHERE youtuber IS NOT NULL AND youtuber != '' AND views IS NOT NULL
                 AND is_animated = true
@@ -188,12 +188,13 @@ def get_metrics():
                     "creator": row[0],
                     "total_views": int(row[1]) if row[1] else 0,
                     "video_count": row[2],
-                    "avg_subscribers": int(row[3]) if row[3] else 0
+                    "avg_subscribers": int(row[3]) if row[3] else 0,
+                    "avatar_img_channel": row[4]
                 })
             
             # Top creators by subscriber count
             cursor.execute("""
-                SELECT youtuber, MAX(subscribers) as max_subscribers, SUM(views) as total_views, COUNT(*) as video_count
+                SELECT youtuber, MAX(subscribers) as max_subscribers, SUM(views) as total_views, COUNT(*) as video_count, MAX(avatar_img_channel) as avatar_img_channel
                 FROM videos_full 
                 WHERE youtuber IS NOT NULL AND youtuber != '' AND subscribers IS NOT NULL
                 AND is_animated = true
@@ -207,7 +208,8 @@ def get_metrics():
                     "creator": row[0],
                     "subscribers": int(row[1]) if row[1] else 0,
                     "total_views": int(row[2]) if row[2] else 0,
-                    "video_count": row[3]
+                    "video_count": row[3],
+                    "avatar_img_channel": row[4]
                 })
             
             # Top creators by engagement rate
@@ -222,7 +224,8 @@ def get_metrics():
                            WHEN SUM(views) > 0 THEN 
                                ((SUM(COALESCE(likes, 0)) + SUM(COALESCE(num_comments, 0)) + MAX(COALESCE(subscribers, 0))) * 100.0 / SUM(views))
                            ELSE 0 
-                       END as engagement_rate
+                       END as engagement_rate,
+                       MAX(avatar_img_channel) as avatar_img_channel
                 FROM videos_full 
                 WHERE youtuber IS NOT NULL AND youtuber != '' AND views IS NOT NULL AND views > 0
                 AND is_animated = true
@@ -239,7 +242,8 @@ def get_metrics():
                     "total_comments": int(row[3]) if row[3] else 0,
                     "subscribers": int(row[4]) if row[4] else 0,
                     "video_count": row[5],
-                    "engagement_rate": round(float(row[6]), 2) if row[6] else 0
+                    "engagement_rate": round(float(row[6]), 2) if row[6] else 0,
+                    "avatar_img_channel": row[7]
                 })
             
             # 3. Top videos by date ranges
@@ -337,7 +341,8 @@ def get_metrics():
                            SUM(views) as total_views,
                            COUNT(*) as video_count,
                            MIN(date_posted) as first_posted,
-                           MAX(date_posted) as latest_posted
+                           MAX(date_posted) as latest_posted,
+                           MAX(avatar_img_channel) as avatar_img_channel
                     FROM videos_full 
                     WHERE youtuber IS NOT NULL AND youtuber != '' 
                     AND subscribers IS NOT NULL AND subscribers < 50000
@@ -345,7 +350,7 @@ def get_metrics():
                     AND is_animated = true
                     GROUP BY youtuber
                 )
-                SELECT youtuber, max_subscribers, total_views, video_count, first_posted, latest_posted,
+                SELECT youtuber, max_subscribers, total_views, video_count, first_posted, latest_posted, avatar_img_channel,
                        CASE 
                            WHEN first_posted IS NOT NULL THEN 
                                total_views::float / GREATEST(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - first_posted))::float / 86400, 1)
@@ -365,7 +370,8 @@ def get_metrics():
                     "video_count": row[3],
                     "first_posted": row[4].isoformat() if row[4] else None,
                     "latest_posted": row[5].isoformat() if row[5] else None,
-                    "velocity": round(float(row[6]), 2) if row[6] else 0
+                    "avatar_img_channel": row[6],
+                    "velocity": round(float(row[7]), 2) if row[7] else 0
                 })
         
         return jsonify({
