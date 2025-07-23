@@ -63,8 +63,7 @@ curl http://your-server:8080/status
 # View metrics
 curl http://your-server:8080/metrics
 
-# Check queue status
-curl http://your-server:8080/queue/stats
+d
 ```
 
 ---

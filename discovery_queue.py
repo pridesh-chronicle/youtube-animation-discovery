@@ -200,3 +200,39 @@ class DiscoveryQueue:
         except Exception as e:
             logger.error(f"Failed to cleanup old entries: {str(e)}")
             return 0
+    
+    def __len__(self) -> int:
+        """Return number of pending videos in queue"""
+        try:
+            stats = self.get_stats()
+            return stats.get('pending', 0)
+        except Exception:
+            return 0
+    
+    def __bool__(self) -> bool:
+        """Return True if queue has pending videos"""
+        return len(self) > 0
+    
+    def reset_stuck_processing(self) -> int:
+        """Reset videos stuck in 'processing' status back to 'pending'"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE discovery_queue 
+                    SET status = 'pending'
+                    WHERE status = 'processing' 
+                    AND added_at < CURRENT_TIMESTAMP - INTERVAL '30 minutes'
+                """)
+                
+                reset_count = cursor.rowcount
+                conn.commit()
+                
+                if reset_count > 0:
+                    logger.info(f"Reset {reset_count} stuck processing videos")
+                
+                return reset_count
+                
+        except Exception as e:
+            logger.error(f"Failed to reset stuck processing videos: {str(e)}")
+            return 0

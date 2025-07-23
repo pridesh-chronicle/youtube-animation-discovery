@@ -140,13 +140,13 @@ def get_metrics():
             cursor = conn.cursor()
             
             # Basic database metrics (animated videos only)
-            cursor.execute("SELECT COUNT(*) FROM videos_full WHERE is_animated = true")
+            cursor.execute("SELECT COUNT(*) FROM videos_full WHERE type = 'ANIMATED'")
             total_videos = cursor.fetchone()[0]
             
-            cursor.execute("SELECT COUNT(DISTINCT youtuber) FROM videos_full WHERE youtuber IS NOT NULL AND youtuber != '' AND is_animated = true")
+            cursor.execute("SELECT COUNT(DISTINCT youtuber) FROM videos_full WHERE youtuber IS NOT NULL AND youtuber != '' AND type = 'ANIMATED'")
             total_creators = cursor.fetchone()[0]
             
-            cursor.execute("SELECT SUM(views) FROM videos_full WHERE views IS NOT NULL AND is_animated = true")
+            cursor.execute("SELECT SUM(views) FROM videos_full WHERE views IS NOT NULL AND type = 'ANIMATED'")
             total_views_result = cursor.fetchone()[0]
             total_views = int(total_views_result) if total_views_result else 0
             
@@ -154,7 +154,7 @@ def get_metrics():
             cursor.execute("""
                 SELECT video_id, title, youtuber, views, discovered_at, url, avatar_img_channel, preview_image
                 FROM videos_full 
-                WHERE is_animated = true
+                WHERE type = 'ANIMATED'
                 ORDER BY discovered_at DESC 
                 LIMIT 5
             """)
@@ -177,7 +177,7 @@ def get_metrics():
                 SELECT youtuber, SUM(views) as total_views, COUNT(*) as video_count, AVG(subscribers) as avg_subscribers, MAX(avatar_img_channel) as avatar_img_channel
                 FROM videos_full 
                 WHERE youtuber IS NOT NULL AND youtuber != '' AND views IS NOT NULL
-                AND is_animated = true
+                AND type = 'ANIMATED'
                 GROUP BY youtuber 
                 ORDER BY total_views DESC 
                 LIMIT 5
@@ -197,7 +197,7 @@ def get_metrics():
                 SELECT youtuber, MAX(subscribers) as max_subscribers, SUM(views) as total_views, COUNT(*) as video_count, MAX(avatar_img_channel) as avatar_img_channel
                 FROM videos_full 
                 WHERE youtuber IS NOT NULL AND youtuber != '' AND subscribers IS NOT NULL
-                AND is_animated = true
+                AND type = 'ANIMATED'
                 GROUP BY youtuber 
                 ORDER BY max_subscribers DESC 
                 LIMIT 5
@@ -228,7 +228,7 @@ def get_metrics():
                        MAX(avatar_img_channel) as avatar_img_channel
                 FROM videos_full 
                 WHERE youtuber IS NOT NULL AND youtuber != '' AND views IS NOT NULL AND views > 0
-                AND is_animated = true
+                AND type = 'ANIMATED'
                 GROUP BY youtuber 
                 ORDER BY engagement_rate DESC 
                 LIMIT 5
@@ -262,7 +262,7 @@ def get_metrics():
                     FROM videos_full 
                     WHERE date_posted >= CURRENT_DATE - INTERVAL '{interval}'
                     AND views IS NOT NULL
-                    AND is_animated = true
+                    AND type = 'ANIMATED'
                     ORDER BY views DESC 
                     LIMIT 5
                 """)
@@ -286,7 +286,7 @@ def get_metrics():
                 SELECT video_id, title, youtuber, views, date_posted, url, avatar_img_channel, preview_image
                 FROM videos_full 
                 WHERE views IS NOT NULL
-                AND is_animated = true
+                AND type = 'ANIMATED'
                 ORDER BY views DESC 
                 LIMIT 5
             """)
@@ -315,7 +315,7 @@ def get_metrics():
                 FROM videos_full 
                 WHERE date_posted >= CURRENT_TIMESTAMP - INTERVAL '30 days'
                 AND views IS NOT NULL AND views > 0
-                AND is_animated = true
+                AND type = 'ANIMATED'
                 ORDER BY views_per_day DESC 
                 LIMIT 5
             """)
@@ -347,7 +347,7 @@ def get_metrics():
                     WHERE youtuber IS NOT NULL AND youtuber != '' 
                     AND subscribers IS NOT NULL AND subscribers < 50000
                     AND date_posted IS NOT NULL
-                    AND is_animated = true
+                    AND type = 'ANIMATED'
                     GROUP BY youtuber
                 )
                 SELECT youtuber, max_subscribers, total_views, video_count, first_posted, latest_posted, avatar_img_channel,
@@ -651,6 +651,460 @@ def cleanup_queue():
         logger.error("Failed to cleanup queue", extra={"error": str(e)})
         return jsonify({
             "error": "Failed to cleanup queue",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+# Helper functions for focused endpoints
+def get_kids_filter_clause(include_kids):
+    """Helper function to generate kids filtering SQL clause"""
+    if include_kids == False:
+        return "AND is_kids != true"
+    return ""
+
+def parse_include_kids_param(request):
+    """Parse include_kids query parameter, default to True"""
+    include_kids_param = request.args.get('include_kids', 'true').lower()
+    return include_kids_param in ['true', '1', 'yes']
+
+def parse_time_period_param(request):
+    """Parse and validate time_period parameter"""
+    time_period = request.args.get('time_period', 'all_time')
+    valid_periods = ['1d', '7d', '1m', '1y', 'all_time']
+    if time_period not in valid_periods:
+        time_period = 'all_time'
+    return time_period
+
+def get_time_filter_clause(time_period):
+    """Get SQL WHERE clause for time period filtering"""
+    if time_period == '1d':
+        return "AND date_posted >= CURRENT_DATE - INTERVAL '1 day'"
+    elif time_period == '7d':
+        return "AND date_posted >= CURRENT_DATE - INTERVAL '7 days'"
+    elif time_period == '1m':
+        return "AND date_posted >= CURRENT_DATE - INTERVAL '1 month'"
+    elif time_period == '1y':
+        return "AND date_posted >= CURRENT_DATE - INTERVAL '1 year'"
+    else:  # all_time
+        return ""
+
+@app.route('/metrics/overview', methods=['GET'])
+def get_metrics_overview():
+    """Get database overview metrics with kids filtering"""
+    try:
+        from cloud_database import CloudDatabase
+        db = CloudDatabase()
+        
+        include_kids = parse_include_kids_param(request)
+        kids_filter = get_kids_filter_clause(include_kids)
+        
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Basic database metrics with kids filtering
+            cursor.execute(f"SELECT COUNT(*) FROM videos_full WHERE type = 'ANIMATED' {kids_filter}")
+            total_videos = cursor.fetchone()[0]
+            
+            cursor.execute(f"SELECT COUNT(DISTINCT youtuber) FROM videos_full WHERE youtuber IS NOT NULL AND youtuber != '' AND type = 'ANIMATED' {kids_filter}")
+            total_creators = cursor.fetchone()[0]
+            
+            cursor.execute(f"SELECT SUM(views) FROM videos_full WHERE views IS NOT NULL AND type = 'ANIMATED' {kids_filter}")
+            total_views_result = cursor.fetchone()[0]
+            total_views = int(total_views_result) if total_views_result else 0
+
+        return jsonify({
+            "timestamp": datetime.now().isoformat(),
+            "include_kids": include_kids,
+            "database_overview": {
+                "total_videos": total_videos,
+                "total_creators": total_creators,
+                "total_views": total_views
+            },
+            "discovery_agent_status": discovery_stats["status"],
+            "current_queue_size": discovery_stats.get("queue_size", 0)
+        }), 200
+        
+    except Exception as e:
+        logger.error("Failed to get overview metrics", extra={"error": str(e)})
+        return jsonify({
+            "error": "Failed to retrieve overview metrics",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+@app.route('/metrics/videos', methods=['GET'])
+def get_metrics_videos():
+    """Get video metrics with kids filtering and time period support"""
+    try:
+        from cloud_database import CloudDatabase
+        db = CloudDatabase()
+        
+        include_kids = parse_include_kids_param(request)
+        time_period = parse_time_period_param(request)
+        kids_filter = get_kids_filter_clause(include_kids)
+        time_filter = get_time_filter_clause(time_period)
+        
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Recent videos (always show last 5 discovered regardless of time period)
+            cursor.execute(f"""
+                SELECT video_id, title, youtuber, views, discovered_at, url, avatar_img_channel, preview_image
+                FROM videos_full 
+                WHERE type = 'ANIMATED' {kids_filter}
+                ORDER BY discovered_at DESC 
+                LIMIT 5
+            """)
+            recent_videos = []
+            for row in cursor.fetchall():
+                recent_videos.append({
+                    "video_id": row[0],
+                    "title": row[1],
+                    "creator": row[2],
+                    "views": int(row[3]) if row[3] else 0,
+                    "discovered_at": row[4].isoformat() if row[4] else None,
+                    "url": row[5],
+                    "avatar_img_channel": row[6],
+                    "preview_image": row[7]
+                })
+            
+            # Top videos by time period
+            cursor.execute(f"""
+                SELECT video_id, title, youtuber, views, date_posted, url, avatar_img_channel, preview_image
+                FROM videos_full 
+                WHERE views IS NOT NULL
+                AND type = 'ANIMATED'
+                {kids_filter}
+                {time_filter}
+                ORDER BY views DESC 
+                LIMIT 10
+            """)
+            
+            top_videos = []
+            for row in cursor.fetchall():
+                top_videos.append({
+                    "video_id": row[0],
+                    "title": row[1],
+                    "creator": row[2],
+                    "views": int(row[3]) if row[3] else 0,
+                    "date_posted": row[4].isoformat() if row[4] else None,
+                    "url": row[5],
+                    "avatar_img_channel": row[6],
+                    "preview_image": row[7]
+                })
+
+        return jsonify({
+            "timestamp": datetime.now().isoformat(),
+            "include_kids": include_kids,
+            "time_period": time_period,
+            "recent_videos": recent_videos,
+            f"top_videos_{time_period}": top_videos
+        }), 200
+        
+    except Exception as e:
+        logger.error("Failed to get video metrics", extra={"error": str(e)})
+        return jsonify({
+            "error": "Failed to retrieve video metrics",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+@app.route('/metrics/creators', methods=['GET'])
+def get_metrics_creators():
+    """Get creator metrics with kids filtering and time period support"""
+    try:
+        from cloud_database import CloudDatabase
+        db = CloudDatabase()
+        
+        include_kids = parse_include_kids_param(request)
+        time_period = parse_time_period_param(request)
+        kids_filter = get_kids_filter_clause(include_kids)
+        time_filter = get_time_filter_clause(time_period)
+        
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Top creators by view count
+            cursor.execute(f"""
+                SELECT youtuber, SUM(views) as total_views, COUNT(*) as video_count, 
+                       AVG(subscribers) as avg_subscribers, MAX(avatar_img_channel) as avatar_img_channel
+                FROM videos_full 
+                WHERE youtuber IS NOT NULL AND youtuber != '' AND views IS NOT NULL
+                AND type = 'ANIMATED' {kids_filter} {time_filter}
+                GROUP BY youtuber 
+                ORDER BY total_views DESC 
+                LIMIT 10
+            """)
+            top_creators_by_views = []
+            for row in cursor.fetchall():
+                top_creators_by_views.append({
+                    "creator": row[0],
+                    "total_views": int(row[1]) if row[1] else 0,
+                    "video_count": row[2],
+                    "avg_subscribers": int(row[3]) if row[3] else 0,
+                    "avatar_img_channel": row[4]
+                })
+
+            # Top creators by subscriber count
+            cursor.execute(f"""
+                SELECT youtuber, MAX(subscribers) as max_subscribers, SUM(views) as total_views, 
+                       COUNT(*) as video_count, MAX(avatar_img_channel) as avatar_img_channel
+                FROM videos_full 
+                WHERE youtuber IS NOT NULL AND youtuber != '' AND subscribers IS NOT NULL
+                AND type = 'ANIMATED' {kids_filter} {time_filter}
+                GROUP BY youtuber 
+                ORDER BY max_subscribers DESC 
+                LIMIT 10
+            """)
+            top_creators_by_subscribers = []
+            for row in cursor.fetchall():
+                top_creators_by_subscribers.append({
+                    "creator": row[0],
+                    "subscribers": int(row[1]) if row[1] else 0,
+                    "total_views": int(row[2]) if row[2] else 0,
+                    "video_count": row[3],
+                    "avatar_img_channel": row[4]
+                })
+
+            # Top creators by engagement rate
+            cursor.execute(f"""
+                SELECT youtuber, 
+                       SUM(views) as total_views,
+                       SUM(likes) as total_likes,
+                       SUM(num_comments) as total_comments,
+                       MAX(subscribers) as max_subscribers,
+                       COUNT(*) as video_count,
+                       CASE 
+                           WHEN SUM(views) > 0 THEN 
+                               ((SUM(COALESCE(likes, 0)) + SUM(COALESCE(num_comments, 0)) + MAX(COALESCE(subscribers, 0))) * 100.0 / SUM(views))
+                           ELSE 0 
+                       END as engagement_rate,
+                       MAX(avatar_img_channel) as avatar_img_channel
+                FROM videos_full 
+                WHERE youtuber IS NOT NULL AND youtuber != '' AND views IS NOT NULL AND views > 0
+                AND type = 'ANIMATED' {kids_filter} {time_filter}
+                GROUP BY youtuber 
+                ORDER BY engagement_rate DESC 
+                LIMIT 10
+            """)
+            top_creators_by_engagement = []
+            for row in cursor.fetchall():
+                top_creators_by_engagement.append({
+                    "creator": row[0],
+                    "total_views": int(row[1]) if row[1] else 0,
+                    "total_likes": int(row[2]) if row[2] else 0,
+                    "total_comments": int(row[3]) if row[3] else 0,
+                    "subscribers": int(row[4]) if row[4] else 0,
+                    "video_count": row[5],
+                    "engagement_rate": round(float(row[6]), 2) if row[6] else 0,
+                    "avatar_img_channel": row[7]
+                })
+
+        return jsonify({
+            "timestamp": datetime.now().isoformat(),
+            "include_kids": include_kids,
+            "time_period": time_period,
+            "top_creators": {
+                "by_views": top_creators_by_views,
+                "by_subscribers": top_creators_by_subscribers,
+                "by_engagement": top_creators_by_engagement
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error("Failed to get creator metrics", extra={"error": str(e)})
+        return jsonify({
+            "error": "Failed to retrieve creator metrics",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+@app.route('/metrics/trending', methods=['GET'])
+def get_metrics_trending():
+    """Get trending music and tags with kids filtering and time period support"""
+    try:
+        from cloud_database import CloudDatabase
+        db = CloudDatabase()
+        
+        include_kids = parse_include_kids_param(request)
+        time_period = parse_time_period_param(request)
+        kids_filter = get_kids_filter_clause(include_kids)
+        time_filter = get_time_filter_clause(time_period)
+        
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Trending music (count occurrences of music field)
+            cursor.execute(f"""
+                SELECT music, COUNT(*) as usage_count, 
+                       COUNT(DISTINCT youtuber) as creator_count,
+                       SUM(views) as total_views
+                FROM videos_full 
+                WHERE music IS NOT NULL AND music != ''
+                AND type = 'ANIMATED' {kids_filter} {time_filter}
+                GROUP BY music 
+                ORDER BY usage_count DESC, total_views DESC
+                LIMIT 15
+            """)
+            trending_music = []
+            for row in cursor.fetchall():
+                trending_music.append({
+                    "music": row[0],
+                    "usage_count": row[1],
+                    "creator_count": row[2],
+                    "total_views": int(row[3]) if row[3] else 0
+                })
+
+            # Trending tags (unnest JSONB arrays and count individual tags)
+            cursor.execute(f"""
+                WITH tag_unnested AS (
+                    SELECT jsonb_array_elements_text(tags) as tag, 
+                           views, youtuber
+                    FROM videos_full 
+                    WHERE tags IS NOT NULL 
+                    AND jsonb_typeof(tags) = 'array'
+                    AND type = 'ANIMATED' {kids_filter} {time_filter}
+                    
+                    UNION ALL
+                    
+                    SELECT jsonb_array_elements_text(hashtags) as tag,
+                           views, youtuber  
+                    FROM videos_full 
+                    WHERE hashtags IS NOT NULL 
+                    AND jsonb_typeof(hashtags) = 'array'
+                    AND type = 'ANIMATED' {kids_filter} {time_filter}
+                )
+                SELECT tag, COUNT(*) as usage_count,
+                       COUNT(DISTINCT youtuber) as creator_count,
+                       SUM(views) as total_views
+                FROM tag_unnested 
+                WHERE tag IS NOT NULL AND tag != ''
+                AND LENGTH(tag) > 2  -- Filter out very short tags
+                GROUP BY tag 
+                ORDER BY usage_count DESC, total_views DESC
+                LIMIT 20
+            """)
+            trending_tags = []
+            for row in cursor.fetchall():
+                trending_tags.append({
+                    "tag": row[0],
+                    "usage_count": row[1],
+                    "creator_count": row[2],
+                    "total_views": int(row[3]) if row[3] else 0
+                })
+
+        return jsonify({
+            "timestamp": datetime.now().isoformat(),
+            "include_kids": include_kids,
+            "time_period": time_period,
+            f"trending_music_{time_period}": trending_music,
+            f"trending_tags_{time_period}": trending_tags
+        }), 200
+        
+    except Exception as e:
+        logger.error("Failed to get trending metrics", extra={"error": str(e)})
+        return jsonify({
+            "error": "Failed to retrieve trending metrics",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+@app.route('/metrics/upcoming', methods=['GET'])
+def get_metrics_upcoming():
+    """Get up-and-coming videos and creators with kids filtering"""
+    try:
+        from cloud_database import CloudDatabase
+        db = CloudDatabase()
+        
+        include_kids = parse_include_kids_param(request)
+        kids_filter = get_kids_filter_clause(include_kids)
+        
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Up and coming videos (posted <30 days, ordered by views/day)
+            cursor.execute(f"""
+                SELECT video_id, title, youtuber, views, date_posted, url, avatar_img_channel, preview_image,
+                       CASE 
+                           WHEN date_posted IS NOT NULL THEN 
+                               views::float / GREATEST(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - date_posted))::float / 86400, 1)
+                           ELSE 0 
+                       END as views_per_day
+                FROM videos_full 
+                WHERE date_posted >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+                AND views IS NOT NULL AND views > 0
+                AND type = 'ANIMATED' {kids_filter}
+                ORDER BY views_per_day DESC 
+                LIMIT 5
+            """)
+            upcoming_videos = []
+            for row in cursor.fetchall():
+                upcoming_videos.append({
+                    "video_id": row[0],
+                    "title": row[1],
+                    "creator": row[2],
+                    "views": int(row[3]) if row[3] else 0,
+                    "date_posted": row[4].isoformat() if row[4] else None,
+                    "url": row[5],
+                    "avatar_img_channel": row[6],
+                    "preview_image": row[7],
+                    "views_per_day": round(float(row[8]), 2) if row[8] else 0
+                })
+
+            # Up and coming creators (<50k subs, ordered by velocity)
+            cursor.execute(f"""
+                WITH creator_metrics AS (
+                    SELECT youtuber,
+                           MAX(subscribers) as max_subscribers,
+                           SUM(views) as total_views,
+                           COUNT(*) as video_count,
+                           MIN(date_posted) as first_posted,
+                           MAX(date_posted) as latest_posted,
+                           MAX(avatar_img_channel) as avatar_img_channel
+                    FROM videos_full 
+                    WHERE youtuber IS NOT NULL AND youtuber != '' 
+                    AND subscribers IS NOT NULL AND subscribers < 50000
+                    AND date_posted IS NOT NULL
+                    AND type = 'ANIMATED' {kids_filter}
+                    GROUP BY youtuber
+                )
+                SELECT youtuber, max_subscribers, total_views, video_count, first_posted, latest_posted, avatar_img_channel,
+                       CASE 
+                           WHEN first_posted IS NOT NULL THEN 
+                               total_views::float / GREATEST(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - first_posted))::float / 86400, 1)
+                           ELSE 0 
+                       END as velocity
+                FROM creator_metrics
+                WHERE first_posted IS NOT NULL
+                ORDER BY velocity DESC 
+                LIMIT 5
+            """)
+            upcoming_creators = []
+            for row in cursor.fetchall():
+                upcoming_creators.append({
+                    "creator": row[0],
+                    "subscribers": int(row[1]) if row[1] else 0,
+                    "total_views": int(row[2]) if row[2] else 0,
+                    "video_count": row[3],
+                    "first_posted": row[4].isoformat() if row[4] else None,
+                    "latest_posted": row[5].isoformat() if row[5] else None,
+                    "avatar_img_channel": row[6],
+                    "velocity": round(float(row[7]), 2) if row[7] else 0
+                })
+
+        return jsonify({
+            "timestamp": datetime.now().isoformat(),
+            "include_kids": include_kids,
+            "up_and_coming": {
+                "videos": upcoming_videos,
+                "creators": upcoming_creators
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error("Failed to get upcoming metrics", extra={"error": str(e)})
+        return jsonify({
+            "error": "Failed to retrieve upcoming metrics",
             "message": str(e),
             "timestamp": datetime.now().isoformat()
         }), 500

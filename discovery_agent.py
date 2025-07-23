@@ -337,8 +337,7 @@ class DiscoveryAgent:
                 "queue_stats": current_queue_stats
             })
             
-            # Small delay to be respectful to APIs
-            time.sleep(1)
+            # Process immediately for maximum speed
         
         # Final summary with queue cleanup
         final_queue_stats = self.queue.get_stats()

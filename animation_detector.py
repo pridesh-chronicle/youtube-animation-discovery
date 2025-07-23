@@ -36,30 +36,32 @@ def is_animated(video_url, save_videos=False, save_frames=False):
         
         # Create prompt for Gemini
         prompt = f"""
-        Please analyze this YouTube video and determine if it's ANIMATED or LIVE-ACTION content.
-
+        Please analyze this YouTube video and classify it as either ANIMATED or LIVE-ACTION.
         YouTube URL: {video_url}
+        Definitions:
+        - ANIMATED content:
+            - Any content primarily made up of visuals that are **artistically created rather than filmed from the real world**.
+            - Includes but is not limited to:
+            - 2D animation (anime, cartoons, drawn/illustrated)
+            - 3D computer animation (CGI, Pixar-style, stylized rendering)
+            - Game engine visuals (e.g., machinima, cinematic game footage, gameplay-centered videos without prominent real-world presenter)
+            - Digital puppet/rig animation (e.g., VTuber models)
+            - Motion graphics, stylized digital art, kinetic typography
+            - Stop-motion, claymation, puppetry
+            - Any mixed media where the **dominant style matches examples like Hazbin Hotel, Amazing Digital Circus, Palworld, RWBY, Meta Runner, Murder Drones**.
+        - LIVE-ACTION content:
+            - Content primarily consisting of **footage captured from real life**:
+            - Real people, places, and environments filmed by a camera
+            - Vlogs, interviews, tutorials, reviews
+            - Music videos featuring live performers
+            - Documentary-style footage
+            - Webcam commentary videos where real people are clearly visible, even if discussing animated/gaming content
+        Key principle:
+        If the dominant presentation is not real-world footage of humans or environments, classify as `ANIMATED`.
+        Respond with ONLY one word:
+        - `ANIMATED`
+        - `LIVE-ACTION`
 
-        ANIMATED content includes:
-        - Traditional 2D animation (cartoons, anime)
-        - 3D computer animation (Pixar-style, CGI movies/shows)
-        - Motion graphics and digital animations
-        - Game footage with animated characters
-        - Drawn/illustrated content and characters
-        - Stop-motion animation
-        - Mixed media with predominantly animated elements
-
-        LIVE-ACTION content includes:
-        - Real people (vlogs, tutorials, interviews, reviews)
-        - Documentary footage with real people/places
-        - Live-recorded content with real actors
-        - Real-world photography and videography
-        - Gaming videos with real people (even if game is animated)
-        - Music videos with real performers
-
-        Please respond with ONLY one word:
-        - "ANIMATED" if the video is primarily animated content
-        - "LIVE-ACTION" if the video is primarily live-action content
 
         Your response:
         """

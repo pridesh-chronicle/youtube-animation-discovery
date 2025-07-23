@@ -122,6 +122,23 @@ class CloudDatabase:
                         duration_category TEXT,
                         content_type TEXT,
                         
+                        -- Enhanced BrightData Fields (collected during discovery)
+                        music TEXT,
+                        preview_image TEXT,
+                        shortcode TEXT,
+                        avatar_img_channel TEXT,
+                        is_sponsored BOOLEAN,
+                        license TEXT,
+                        viewport_frames JSONB,
+                        current_optimal_res TEXT,
+                        color TEXT,
+                        quality TEXT,
+                        post_type TEXT,
+                        youtuber_id TEXT,
+                        transcript JSONB,
+                        transcript_language TEXT,
+                        chapters JSONB,
+                        
                         -- Discovery Agent Fields
                         num_recommendations INTEGER,
                         discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -179,12 +196,21 @@ class CloudDatabase:
                         return None
                     # Always ensure valid JSON format
                     try:
-                        return json.dumps(data)
+                        return json.dumps(data, ensure_ascii=False, default=str)
                     except (TypeError, ValueError):
                         # If it can't be serialized, convert to string and then to JSON
                         return json.dumps(str(data))
                 
-                # Prepare data with all BrightData fields
+                # Helper function to safely extract fields
+                def safe_extract(field_name, force_json=False):
+                    value = video_data.get(field_name)
+                    if value is None:
+                        return None
+                    if force_json or isinstance(value, (dict, list)):
+                        return to_json(value)
+                    return value
+                
+                # Prepare data with all BrightData fields (including new enhancement fields)
                 cursor.execute("""
                     INSERT INTO videos_full (
                         video_id, title, url, video_length, upload_date, date_posted,
@@ -200,11 +226,15 @@ class CloudDatabase:
                         view_count_24h, like_ratio, engagement_rate,
                         country, region,
                         duration_category, content_type,
+                        music, preview_image, shortcode, avatar_img_channel, is_sponsored,
+                        license, viewport_frames, current_optimal_res, color, quality,
+                        post_type, youtuber_id, transcript, transcript_language, chapters,
                         num_recommendations, video_cloud_url, is_animated
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (video_id) DO UPDATE SET
                         title = EXCLUDED.title,
@@ -212,7 +242,11 @@ class CloudDatabase:
                         likes = EXCLUDED.likes,
                         subscribers = EXCLUDED.subscribers,
                         recommended_videos = EXCLUDED.recommended_videos,
-                        video_cloud_url = EXCLUDED.video_cloud_url
+                        video_cloud_url = EXCLUDED.video_cloud_url,
+                        music = EXCLUDED.music,
+                        preview_image = EXCLUDED.preview_image,
+                        transcript = EXCLUDED.transcript,
+                        chapters = EXCLUDED.chapters
                 """, (
                     # Basic Video Information
                     video_data.get('video_id'),
@@ -289,6 +323,23 @@ class CloudDatabase:
                     video_data.get('duration_category'),
                     video_data.get('content_type'),
                     
+                    # Enhanced BrightData Fields (automatically collected during discovery)
+                    safe_extract('music'),
+                    safe_extract('preview_image'),
+                    safe_extract('shortcode'),
+                    safe_extract('avatar_img_channel'),
+                    safe_extract('is_sponsored'),
+                    safe_extract('license'),
+                    safe_extract('viewport_frames', force_json=True),
+                    safe_extract('current_optimal_res'),
+                    safe_extract('color'),
+                    safe_extract('quality'),
+                    safe_extract('post_type'),
+                    safe_extract('youtuber_id'),
+                    safe_extract('transcript', force_json=True),
+                    safe_extract('transcript_language'),
+                    safe_extract('chapters', force_json=True),
+                    
                     # Discovery Agent Fields
                     video_data.get('num_recommendations', 0),
                     video_cloud_url,
@@ -297,13 +348,21 @@ class CloudDatabase:
                 conn.commit()
                 
                 action = "Updated" if is_update else "Inserted"
+                
+                # Count enhanced fields captured
+                enhanced_fields = ['music', 'preview_image', 'shortcode', 'avatar_img_channel', 'is_sponsored',
+                                 'license', 'viewport_frames', 'current_optimal_res', 'color', 'quality',
+                                 'post_type', 'youtuber_id', 'transcript', 'transcript_language', 'chapters']
+                enhanced_captured = len([f for f in enhanced_fields if video_data.get(f) is not None])
+                
                 logger.info(f"Comprehensive video {action.lower()} in database", extra={
                     "video_id": video_id,
                     "action": action,
                     "title": video_data.get('title'),
                     "table": "videos_full",
                     "has_cloud_url": bool(video_cloud_url),
-                    "fields_captured": len([k for k, v in video_data.items() if v is not None])
+                    "fields_captured": len([k for k, v in video_data.items() if v is not None]),
+                    "enhanced_fields_captured": enhanced_captured
                 })
                 
         except Exception as e:
