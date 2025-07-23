@@ -164,13 +164,13 @@ def get_metrics():
             total_views_result = cursor.fetchone()[0]
             total_views = int(total_views_result) if total_views_result else 0
             
-            # 1. Last 5 videos added to the database
+            # 1. Last 10 videos added to the database
             cursor.execute("""
                 SELECT video_id, title, youtuber, views, discovered_at, url, avatar_img_channel, preview_image
                 FROM videos_full 
                 WHERE type = 'ANIMATED'
                 ORDER BY discovered_at DESC 
-                LIMIT 5
+                LIMIT 10
             """)
             recent_videos = []
             for row in cursor.fetchall():
@@ -194,7 +194,7 @@ def get_metrics():
                 AND type = 'ANIMATED'
                 GROUP BY youtuber 
                 ORDER BY total_views DESC 
-                LIMIT 5
+                LIMIT 20
             """)
             top_creators_by_views = []
             for row in cursor.fetchall():
@@ -214,7 +214,7 @@ def get_metrics():
                 AND type = 'ANIMATED'
                 GROUP BY youtuber 
                 ORDER BY max_subscribers DESC 
-                LIMIT 5
+                LIMIT 20
             """)
             top_creators_by_subscribers = []
             for row in cursor.fetchall():
@@ -245,7 +245,7 @@ def get_metrics():
                 AND type = 'ANIMATED'
                 GROUP BY youtuber 
                 ORDER BY engagement_rate DESC 
-                LIMIT 5
+                LIMIT 20
             """)
             top_creators_by_engagement = []
             for row in cursor.fetchall():
@@ -278,7 +278,7 @@ def get_metrics():
                     AND views IS NOT NULL
                     AND type = 'ANIMATED'
                     ORDER BY views DESC 
-                    LIMIT 5
+                    LIMIT 20
                 """)
                 
                 period_videos = []
@@ -302,7 +302,7 @@ def get_metrics():
                 WHERE views IS NOT NULL
                 AND type = 'ANIMATED'
                 ORDER BY views DESC 
-                LIMIT 5
+                LIMIT 20
             """)
             all_time_top_videos = []
             for row in cursor.fetchall():
@@ -331,7 +331,7 @@ def get_metrics():
                 AND views IS NOT NULL AND views > 0
                 AND type = 'ANIMATED'
                 ORDER BY views_per_day DESC 
-                LIMIT 5
+                LIMIT 20
             """)
             up_and_coming_videos = []
             for row in cursor.fetchall():
@@ -373,7 +373,7 @@ def get_metrics():
                 FROM creator_metrics
                 WHERE first_posted IS NOT NULL
                 ORDER BY velocity DESC 
-                LIMIT 5
+                LIMIT 20
             """)
             up_and_coming_creators = []
             for row in cursor.fetchall():
@@ -756,13 +756,13 @@ def get_metrics_videos():
         with db.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Recent videos (always show last 5 discovered regardless of time period)
+            # Recent videos (always show last 10 discovered regardless of time period)
             cursor.execute(f"""
                 SELECT video_id, title, youtuber, views, discovered_at, url, avatar_img_channel, preview_image
                 FROM videos_full 
                 WHERE type = 'ANIMATED' {kids_filter}
                 ORDER BY discovered_at DESC 
-                LIMIT 5
+                LIMIT 10
             """)
             recent_videos = []
             for row in cursor.fetchall():
@@ -786,7 +786,7 @@ def get_metrics_videos():
                 {kids_filter}
                 {time_filter}
                 ORDER BY views DESC 
-                LIMIT 10
+                LIMIT 20
             """)
             
             top_videos = []
@@ -841,7 +841,7 @@ def get_metrics_creators():
                 AND type = 'ANIMATED' {kids_filter} {time_filter}
                 GROUP BY youtuber 
                 ORDER BY total_views DESC 
-                LIMIT 10
+                LIMIT 20
             """)
             top_creators_by_views = []
             for row in cursor.fetchall():
@@ -862,7 +862,7 @@ def get_metrics_creators():
                 AND type = 'ANIMATED' {kids_filter} {time_filter}
                 GROUP BY youtuber 
                 ORDER BY max_subscribers DESC 
-                LIMIT 10
+                LIMIT 20
             """)
             top_creators_by_subscribers = []
             for row in cursor.fetchall():
@@ -893,7 +893,7 @@ def get_metrics_creators():
                 AND type = 'ANIMATED' {kids_filter} {time_filter}
                 GROUP BY youtuber 
                 ORDER BY engagement_rate DESC 
-                LIMIT 10
+                LIMIT 20
             """)
             top_creators_by_engagement = []
             for row in cursor.fetchall():
@@ -951,7 +951,7 @@ def get_metrics_trending():
                 AND type = 'ANIMATED' {kids_filter} {time_filter}
                 GROUP BY music 
                 ORDER BY usage_count DESC, total_views DESC
-                LIMIT 15
+                LIMIT 20
             """)
             trending_music = []
             for row in cursor.fetchall():
@@ -1041,7 +1041,7 @@ def get_metrics_upcoming():
                 AND views IS NOT NULL AND views > 0
                 AND type = 'ANIMATED' {kids_filter}
                 ORDER BY views_per_day DESC 
-                LIMIT 5
+                LIMIT 20
             """)
             upcoming_videos = []
             for row in cursor.fetchall():
@@ -1083,7 +1083,7 @@ def get_metrics_upcoming():
                 FROM creator_metrics
                 WHERE first_posted IS NOT NULL
                 ORDER BY velocity DESC 
-                LIMIT 5
+                LIMIT 20
             """)
             upcoming_creators = []
             for row in cursor.fetchall():
