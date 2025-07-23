@@ -49,6 +49,21 @@ discovery_stats = {
 
 discovery_thread = None
 
+# Global database instance to prevent connection pool exhaustion
+global_db = None
+db_lock = threading.Lock()
+
+def get_database():
+    """Get or create global database instance (thread-safe)"""
+    global global_db
+    if global_db is None:
+        with db_lock:
+            if global_db is None:  # Double-check pattern
+                from cloud_database import CloudDatabase
+                global_db = CloudDatabase()
+                logger.info("Global database connection initialized")
+    return global_db
+
 def update_discovery_stats(agent, iteration=None):
     """Update global discovery statistics"""
     global discovery_stats
@@ -133,8 +148,7 @@ def health_check():
 def get_metrics():
     """Get comprehensive analytics and metrics"""
     try:
-        from cloud_database import CloudDatabase
-        db = CloudDatabase()
+        db = get_database()
         
         with db.get_connection() as conn:
             cursor = conn.cursor()
@@ -559,10 +573,9 @@ def index():
 def get_queue_stats():
     """Get comprehensive queue statistics"""
     try:
-        from cloud_database import CloudDatabase
         from discovery_queue import DiscoveryQueue
         
-        db = CloudDatabase()
+        db = get_database()
         queue = DiscoveryQueue(db.get_connection)
         
         stats = queue.get_stats()
@@ -596,10 +609,9 @@ def add_to_queue_endpoint():
                 "timestamp": datetime.now().isoformat()
             }), 400
         
-        from cloud_database import CloudDatabase
         from discovery_queue import DiscoveryQueue
         
-        db = CloudDatabase()
+        db = get_database()
         queue = DiscoveryQueue(db.get_connection)
         
         added_count = queue.add_videos(video_ids, source_video_id)
@@ -627,10 +639,9 @@ def cleanup_queue():
         data = request.get_json() or {}
         days_old = data.get('days_old', 7)
         
-        from cloud_database import CloudDatabase
         from discovery_queue import DiscoveryQueue
         
-        db = CloudDatabase()
+        db = get_database()
         queue = DiscoveryQueue(db.get_connection)
         
         # Clean up old entries
@@ -692,8 +703,7 @@ def get_time_filter_clause(time_period):
 def get_metrics_overview():
     """Get database overview metrics with kids filtering"""
     try:
-        from cloud_database import CloudDatabase
-        db = CloudDatabase()
+        db = get_database()
         
         include_kids = parse_include_kids_param(request)
         kids_filter = get_kids_filter_clause(include_kids)
@@ -736,8 +746,7 @@ def get_metrics_overview():
 def get_metrics_videos():
     """Get video metrics with kids filtering and time period support"""
     try:
-        from cloud_database import CloudDatabase
-        db = CloudDatabase()
+        db = get_database()
         
         include_kids = parse_include_kids_param(request)
         time_period = parse_time_period_param(request)
@@ -813,8 +822,7 @@ def get_metrics_videos():
 def get_metrics_creators():
     """Get creator metrics with kids filtering and time period support"""
     try:
-        from cloud_database import CloudDatabase
-        db = CloudDatabase()
+        db = get_database()
         
         include_kids = parse_include_kids_param(request)
         time_period = parse_time_period_param(request)
@@ -923,8 +931,7 @@ def get_metrics_creators():
 def get_metrics_trending():
     """Get trending music and tags with kids filtering and time period support"""
     try:
-        from cloud_database import CloudDatabase
-        db = CloudDatabase()
+        db = get_database()
         
         include_kids = parse_include_kids_param(request)
         time_period = parse_time_period_param(request)
@@ -1013,8 +1020,7 @@ def get_metrics_trending():
 def get_metrics_upcoming():
     """Get up-and-coming videos and creators with kids filtering"""
     try:
-        from cloud_database import CloudDatabase
-        db = CloudDatabase()
+        db = get_database()
         
         include_kids = parse_include_kids_param(request)
         kids_filter = get_kids_filter_clause(include_kids)
