@@ -1170,19 +1170,41 @@ def get_metrics_genres():
                 ORDER BY video_count DESC
             """)
             
+            genre_data = cursor.fetchall()
+            
+            # Calculate totals for percentage calculations
+            total_videos = sum(row[1] for row in genre_data)
+            total_creators = sum(row[2] for row in genre_data)
+            total_views_all_genres = sum(int(row[3]) if row[3] else 0 for row in genre_data)
+            
             genres = []
-            for row in cursor.fetchall():
+            for row in genre_data:
+                video_count = row[1]
+                creator_count = row[2]
+                genre_total_views = int(row[3]) if row[3] else 0
+                avg_views = int(row[4]) if row[4] else 0
+                
                 genres.append({
                     "genre": row[0],
-                    "video_count": row[1],
-                    "creator_count": row[2],
-                    "total_views": int(row[3]) if row[3] else 0,
-                    "avg_views": int(row[4]) if row[4] else 0
+                    "video_count": video_count,
+                    "creator_count": creator_count,
+                    "total_views": genre_total_views,
+                    "avg_views": avg_views,
+                    # Percentage calculations for composition charts
+                    "percentage_of_videos": round((video_count / total_videos * 100), 2) if total_videos > 0 else 0,
+                    "percentage_of_creators": round((creator_count / total_creators * 100), 2) if total_creators > 0 else 0,
+                    "percentage_of_views": round((genre_total_views / total_views_all_genres * 100), 2) if total_views_all_genres > 0 else 0
                 })
 
         return jsonify({
             "timestamp": datetime.now().isoformat(),
             "include_kids": include_kids,
+            "summary": {
+                "total_videos": total_videos,
+                "total_creators": total_creators,
+                "total_views": total_views_all_genres,
+                "total_genres": len(genres)
+            },
             "genres": genres
         }), 200
         
