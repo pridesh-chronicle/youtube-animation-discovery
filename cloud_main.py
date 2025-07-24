@@ -1297,6 +1297,16 @@ def get_metrics_genre_specific(genre):
 
 def main():
     """Main function for local testing"""
+    import atexit
+    
+    # Register cleanup function
+    def cleanup():
+        global global_db
+        if global_db:
+            global_db.close_pool()
+    
+    atexit.register(cleanup)
+    
     port = int(os.environ.get('PORT', 8080))
     debug = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
     

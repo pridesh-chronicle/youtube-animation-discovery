@@ -1,8 +1,10 @@
 import os
 import psycopg2
+from psycopg2 import pool
 import sqlalchemy
 import logging
 from contextlib import contextmanager
+import threading
 
 # Configure logging for database operations
 logger = logging.getLogger(__name__)
@@ -10,35 +12,65 @@ logger = logging.getLogger(__name__)
 class CloudDatabase:
     def __init__(self):
         self.connection_string = self._build_connection_string()
-        logger.info("Cloud database client initialized")
+        self._connection_pool = None
+        self._pool_lock = threading.Lock()
+        self._initialize_connection_pool()
+        logger.info("Cloud database client initialized with connection pool")
         
     def _build_connection_string(self):
         """Build PostgreSQL connection string"""
         return f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}/{os.getenv('DB_NAME')}"
     
-    @contextmanager
-    def get_connection(self):
-        """Get database connection context manager"""
+    def _initialize_connection_pool(self):
+        """Initialize connection pool with proper limits"""
         try:
-            conn = psycopg2.connect(
+            self._connection_pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn=1,      # Minimum connections in pool
+                maxconn=10,     # Maximum connections in pool  
                 host=os.getenv('DB_HOST'),
                 database=os.getenv('DB_NAME'),
                 user=os.getenv('DB_USER'),
                 password=os.getenv('DB_PASSWORD'),
                 port=5432
             )
-            logger.debug("Database connection established")
-            yield conn
+            logger.info("Database connection pool initialized (1-10 connections)")
+        except Exception as e:
+            logger.error(f"Failed to initialize connection pool: {str(e)}")
+            raise
+    
+    @contextmanager
+    def get_connection(self):
+        """Get database connection from pool"""
+        conn = None
+        try:
+            # Get connection from pool (thread-safe)
+            conn = self._connection_pool.getconn()
+            if conn:
+                logger.debug("Database connection acquired from pool")
+                yield conn
+            else:
+                raise Exception("Failed to get connection from pool")
         except Exception as e:
             logger.error(f"Database connection failed: {str(e)}")
             logger.error(f"Connection details - Host: {os.getenv('DB_HOST')}, DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}")
             raise
         finally:
-            try:
-                conn.close()
-                logger.debug("Database connection closed")
-            except:
-                pass
+            # Return connection to pool
+            if conn:
+                try:
+                    self._connection_pool.putconn(conn)
+                    logger.debug("Database connection returned to pool")
+                except Exception as e:
+                    logger.error(f"Failed to return connection to pool: {str(e)}")
+
+    def close_pool(self):
+        """Close all connections in the pool"""
+        try:
+            if self._connection_pool:
+                self._connection_pool.closeall()
+                logger.info("Database connection pool closed")
+        except Exception as e:
+            logger.error(f"Error closing connection pool: {str(e)}")
 
     def setup_database(self):
         """Create tables in Cloud SQL with comprehensive BrightData schema"""
