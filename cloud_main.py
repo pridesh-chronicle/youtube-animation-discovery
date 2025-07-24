@@ -1152,12 +1152,14 @@ def get_metrics_genres():
         db = get_database()
         
         include_kids = parse_include_kids_param(request)
+        time_period = parse_time_period_param(request)
         kids_filter = get_kids_filter_clause(include_kids)
+        time_filter = get_time_filter_clause(time_period)
         
         with db.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Get counts for each genre
+            # Get counts for each genre with time period filtering
             cursor.execute(f"""
                 SELECT genre, 
                        COUNT(*) as video_count,
@@ -1165,7 +1167,7 @@ def get_metrics_genres():
                        SUM(views) as total_views,
                        AVG(views) as avg_views
                 FROM videos_full 
-                WHERE type = 'ANIMATED' AND genre IS NOT NULL {kids_filter}
+                WHERE type = 'ANIMATED' AND genre IS NOT NULL {kids_filter} {time_filter}
                 GROUP BY genre
                 ORDER BY video_count DESC
             """)
@@ -1199,6 +1201,7 @@ def get_metrics_genres():
         return jsonify({
             "timestamp": datetime.now().isoformat(),
             "include_kids": include_kids,
+            "time_period": time_period,
             "summary": {
                 "total_videos": total_videos,
                 "total_creators": total_creators,
